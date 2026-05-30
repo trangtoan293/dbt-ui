@@ -18,6 +18,7 @@ from utils.input_validation import validate_dbt_selector, validate_dbt_target
 from utils.subprocess_utils import run_command
 from auth import get_current_user, CurrentUser
 from utils.user_paths import resolve_under_root
+from utils.secret_scrub import scrub
 
 router = APIRouter()
 
@@ -106,7 +107,7 @@ def run_dbt_command_task(sub: str, path: Path, command: str, selector: str = "",
                 "command": command,
                 "selector": selector,
                 "completed_at": datetime.now().isoformat(),
-                "output": result.stdout
+                "output": scrub(result.stdout),
             }
         else:
             dbt_command_status[key] = {
@@ -114,7 +115,7 @@ def run_dbt_command_task(sub: str, path: Path, command: str, selector: str = "",
                 "command": command,
                 "selector": selector,
                 "completed_at": datetime.now().isoformat(),
-                "error": result.error
+                "error": scrub(result.error),
             }
     except subprocess.TimeoutExpired:
         dbt_command_status[key] = {
