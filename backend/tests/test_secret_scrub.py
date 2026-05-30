@@ -19,3 +19,18 @@ def test_redacts_url_credentials():
 
 def test_plain_text_unchanged():
     assert scrub("Completed 5 models in 3.2s") == "Completed 5 models in 3.2s"
+
+
+def test_redacts_quoted_password():
+    out = scrub('profiles: {password="S3cr3t!"}')
+    assert "S3cr3t!" not in out
+
+
+def test_redacts_aws_access_key():
+    out = scrub("key=AKIAIOSFODNN7EXAMPLE rest of line")
+    assert "AKIAIOSFODNN7EXAMPLE" not in out
+
+
+def test_redacts_aws_secret_key():
+    out = scrub("aws_secret_access_key=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+    assert "wJalrXUtnFEMI" not in out

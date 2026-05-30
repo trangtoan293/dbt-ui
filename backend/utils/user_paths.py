@@ -5,8 +5,11 @@ supplies a trusted absolute path; it supplies a sub-path that is resolved and
 checked to be inside the user's own root. See ADR 0001 section 3.
 """
 import os
+import re
 from pathlib import Path
 from fastapi import HTTPException
+
+_SUB_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 def git_repos_path() -> Path:
@@ -15,7 +18,7 @@ def git_repos_path() -> Path:
 
 def user_root(sub: str) -> Path:
     """The worktree root for a user, derived from their Keycloak sub."""
-    if not sub or "/" in sub or ".." in sub:
+    if not sub or not _SUB_RE.match(sub):
         raise HTTPException(status_code=400, detail="Invalid user identifier")
     return (git_repos_path() / sub).resolve()
 

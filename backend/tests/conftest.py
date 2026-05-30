@@ -1,4 +1,5 @@
 """Shared test fixtures: a local RSA keypair that stands in for Keycloak's JWKS."""
+import os
 import time
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -8,6 +9,10 @@ import jwt
 TEST_ISSUER = "https://portal-pam.hanas.io/realms/sbv-portal"
 TEST_AUDIENCE = "account"
 TEST_KID = "test-key-1"
+
+# Set env vars before auth module is imported so the hard-fail check passes.
+os.environ.setdefault("KEYCLOAK_ISSUER", TEST_ISSUER)
+os.environ.setdefault("KEYCLOAK_JWKS_URI", "https://portal-pam.hanas.io/realms/sbv-portal/protocol/openid-connect/certs")
 
 
 @pytest.fixture(scope="session")
