@@ -1,5 +1,5 @@
 """Environment variable management API routes."""
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Request, Response, Depends
 from pathlib import Path
 from typing import Dict
 import os
@@ -10,6 +10,8 @@ import hashlib
 
 from models import EnvVarsRequest, SetEnvVarsRequest
 from utils.venv_utils import get_venv_path
+from auth import get_current_user, CurrentUser
+from utils.user_paths import resolve_under_root
 
 router = APIRouter()
 
@@ -56,14 +58,14 @@ def set_env_vars_cookie(response: Response, project_path: str, env_vars: Dict[st
         max_age=COOKIE_MAX_AGE,
         httponly=True,
         samesite="lax",
-        secure=False,  # Set to True in production with HTTPS
+        secure=True,
     )
 
 
 @router.post("/api/scan-env-vars")
-async def scan_env_vars(request: EnvVarsRequest):
+async def scan_env_vars(request: EnvVarsRequest, user: CurrentUser = Depends(get_current_user)):
     """Scan SQL and YML files in the project for environment variable references."""
-    path = Path(request.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, request.path)
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="Project path does not exist")
@@ -152,9 +154,9 @@ async def scan_env_vars(request: EnvVarsRequest):
 
 
 @router.post("/api/set-env-vars")
-async def set_env_vars(request: SetEnvVarsRequest, response: Response):
+async def set_env_vars(request: SetEnvVarsRequest, response: Response, user: CurrentUser = Depends(get_current_user)):
     """Set environment variables in HttpOnly cookie (stored per-project)."""
-    path = Path(request.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, request.path)
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="Project path does not exist")
@@ -176,9 +178,9 @@ async def set_env_vars(request: SetEnvVarsRequest, response: Response):
 
 
 @router.post("/api/get-env-vars")
-async def get_env_vars(request: EnvVarsRequest, http_request: Request):
+async def get_env_vars(request: EnvVarsRequest, http_request: Request, user: CurrentUser = Depends(get_current_user)):
     """Get environment variables from HttpOnly cookie."""
-    path = Path(request.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, request.path)
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="Project path does not exist")

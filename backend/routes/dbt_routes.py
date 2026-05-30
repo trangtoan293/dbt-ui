@@ -1,5 +1,5 @@
 """dbt command API routes."""
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Request
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Request, Depends
 from pydantic import BaseModel
 from pathlib import Path
 from typing import Dict, Optional
@@ -16,43 +16,49 @@ from utils.operation_lock import acquire_lock, release_lock, is_locked, get_lock
 from routes.env_routes import get_env_vars_from_cookie
 from utils.input_validation import validate_dbt_selector, validate_dbt_target
 from utils.subprocess_utils import run_command
+from auth import get_current_user, CurrentUser
+from utils.user_paths import resolve_under_root
+from utils.secret_scrub import scrub
+from utils.rate_limit import RateLimiter
+
+_dbt_rate_limiter = RateLimiter(max_calls=10, window_seconds=60)
 
 router = APIRouter()
 
-# Global dbt command status tracker (for all background dbt operations)
-dbt_command_status: Dict[str, Dict[str, any]] = {}
+# Keyed by (user_sub, resolved_path) so one user can never read another's output.
+dbt_command_status: Dict[tuple, Dict[str, any]] = {}
 
 # Valid dbt commands for the unified endpoint
 VALID_DBT_COMMANDS = {"compile", "run", "test", "seed"}
 
 
 @router.post("/api/dbt-command-status")
-async def get_dbt_command_status(project_path: ProjectPath):
+async def get_dbt_command_status(project_path: ProjectPath, user: CurrentUser = Depends(get_current_user)):
     """Get the status of a background dbt command job."""
-    path = Path(project_path.path).expanduser().resolve()
-    path_str = str(path)
+    path = resolve_under_root(user.sub, project_path.path)
+    key = (user.sub, str(path))
 
-    if path_str not in dbt_command_status:
-        return {"status": "not_started"}
+    if key not in dbt_command_status:
+        return {"status": "idle"}
 
-    return dbt_command_status[path_str]
+    return dbt_command_status[key]
 
 
 # Keep old endpoint for backward compatibility
 @router.post("/api/compilation-status")
-async def get_compilation_status(project_path: ProjectPath):
+async def get_compilation_status(project_path: ProjectPath, user: CurrentUser = Depends(get_current_user)):
     """Get the status of a compilation job. (Deprecated: use /api/dbt-command-status)"""
-    return await get_dbt_command_status(project_path)
+    return await get_dbt_command_status(project_path, user)
 
 
 @router.post("/api/dbt-operation-status")
-async def get_dbt_operation_status(project_path: ProjectPath):
+async def get_dbt_operation_status(project_path: ProjectPath, user: CurrentUser = Depends(get_current_user)):
     """Get the current dbt operation status for a specific worktree (for disabling buttons in UI).
 
     Also returns last completion info so other users can detect when operations
     finish and refresh their state accordingly.
     """
-    path = Path(project_path.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, project_path.path)
     path_str = str(path)
 
     status = get_lock_status(path_str)
@@ -65,12 +71,13 @@ async def get_dbt_operation_status(project_path: ProjectPath):
     }
 
 
-def run_dbt_command_task(path: Path, command: str, selector: str = "", target: str = "", full_refresh: bool = False, env_vars: dict = None):
+def run_dbt_command_task(sub: str, path: Path, command: str, selector: str = "", target: str = "", full_refresh: bool = False, env_vars: dict = None):
     """Background task to run any dbt command and update dbt_command_status."""
     path_str = str(path)
+    key = (sub, path_str)
 
     try:
-        dbt_command_status[path_str] = {
+        dbt_command_status[key] = {
             "status": "running",
             "command": command,
             "selector": selector,
@@ -98,23 +105,23 @@ def run_dbt_command_task(path: Path, command: str, selector: str = "", target: s
         result = run_command(cmd, path, timeout=300, env=env)
 
         if result.success:
-            dbt_command_status[path_str] = {
+            dbt_command_status[key] = {
                 "status": "success",
                 "command": command,
                 "selector": selector,
                 "completed_at": datetime.now().isoformat(),
-                "output": result.stdout
+                "output": scrub(result.stdout),
             }
         else:
-            dbt_command_status[path_str] = {
+            dbt_command_status[key] = {
                 "status": "failed",
                 "command": command,
                 "selector": selector,
                 "completed_at": datetime.now().isoformat(),
-                "error": result.error
+                "error": scrub(result.error),
             }
     except subprocess.TimeoutExpired:
-        dbt_command_status[path_str] = {
+        dbt_command_status[key] = {
             "status": "failed",
             "command": command,
             "selector": selector,
@@ -122,7 +129,7 @@ def run_dbt_command_task(path: Path, command: str, selector: str = "", target: s
             "error": f"dbt {command} timed out after 5 minutes"
         }
     except Exception as e:
-        dbt_command_status[path_str] = {
+        dbt_command_status[key] = {
             "status": "failed",
             "command": command,
             "selector": selector,
@@ -134,9 +141,9 @@ def run_dbt_command_task(path: Path, command: str, selector: str = "", target: s
 
 
 @router.post("/api/dbt-command")
-async def dbt_command(action: DbtCommandRequest, background_tasks: BackgroundTasks, request: Request):
+async def dbt_command(action: DbtCommandRequest, background_tasks: BackgroundTasks, request: Request, user: CurrentUser = Depends(get_current_user)):
     """Unified endpoint to run any dbt command (compile, run, test, seed) in background."""
-    path = Path(action.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, action.path)
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="Project path does not exist")
@@ -152,6 +159,12 @@ async def dbt_command(action: DbtCommandRequest, background_tasks: BackgroundTas
     # Validate selector and target for security
     selector = validate_dbt_selector(action.selector, "selector")
     target = validate_dbt_target(action.target)
+
+    _dbt_rate_limiter.check(user.sub)
+
+    from utils.audit import audit as _audit
+    _audit(sub=user.sub, action=f"dbt_{command}", target=str(path),
+           extra={"selector": action.selector, "target_env": action.target})
 
     path_str = str(path)
 
@@ -187,7 +200,7 @@ async def dbt_command(action: DbtCommandRequest, background_tasks: BackgroundTas
     env_vars = get_env_vars_from_cookie(request, str(path))
 
     # Always run in background
-    background_tasks.add_task(run_dbt_command_task, path, command, selector, target, action.full_refresh, env_vars)
+    background_tasks.add_task(run_dbt_command_task, user.sub, path, command, selector, target, action.full_refresh, env_vars)
 
     return {
         "status": "started",
@@ -199,40 +212,40 @@ async def dbt_command(action: DbtCommandRequest, background_tasks: BackgroundTas
 
 # Keep old compile endpoint for backward compatibility
 @router.post("/api/dbt-compile-model")
-async def dbt_compile_model(action: DbtCommandRequest, background_tasks: BackgroundTasks, request: Request):
+async def dbt_compile_model(action: DbtCommandRequest, background_tasks: BackgroundTasks, request: Request, user: CurrentUser = Depends(get_current_user)):
     """Compile dbt model(s) using project's venv dbt. (Deprecated: use /api/dbt-command)"""
     action.command = "compile"
-    return await dbt_command(action, background_tasks, request)
+    return await dbt_command(action, background_tasks, request, user)
 
 
 # Keep old run endpoint for backward compatibility - now runs in background
 @router.post("/api/dbt-run-model")
-async def dbt_run_model(action: DbtCommandRequest, background_tasks: BackgroundTasks, request: Request):
+async def dbt_run_model(action: DbtCommandRequest, background_tasks: BackgroundTasks, request: Request, user: CurrentUser = Depends(get_current_user)):
     """Run dbt model(s). (Deprecated: use /api/dbt-command)"""
     action.command = "run"
-    return await dbt_command(action, background_tasks, request)
+    return await dbt_command(action, background_tasks, request, user)
 
 
 # Keep old seed endpoint for backward compatibility - now runs in background
 @router.post("/api/dbt-seed")
-async def dbt_seed(action: DbtCommandRequest, background_tasks: BackgroundTasks, request: Request):
+async def dbt_seed(action: DbtCommandRequest, background_tasks: BackgroundTasks, request: Request, user: CurrentUser = Depends(get_current_user)):
     """Run dbt seed. (Deprecated: use /api/dbt-command)"""
     action.command = "seed"
-    return await dbt_command(action, background_tasks, request)
+    return await dbt_command(action, background_tasks, request, user)
 
 
 # Keep old test endpoint for backward compatibility - now runs in background
 @router.post("/api/dbt-test-model")
-async def dbt_test_model(action: DbtCommandRequest, background_tasks: BackgroundTasks, request: Request):
+async def dbt_test_model(action: DbtCommandRequest, background_tasks: BackgroundTasks, request: Request, user: CurrentUser = Depends(get_current_user)):
     """Test dbt model(s). (Deprecated: use /api/dbt-command)"""
     action.command = "test"
-    return await dbt_command(action, background_tasks, request)
+    return await dbt_command(action, background_tasks, request, user)
 
 
 @router.post("/api/dbt-ls")
-async def dbt_ls(ls_request: DbtLsRequest):
+async def dbt_ls(ls_request: DbtLsRequest, user: CurrentUser = Depends(get_current_user)):
     """Run dbt ls to get list of models matching a selector."""
-    path = Path(ls_request.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, ls_request.path)
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="Project path does not exist")
@@ -297,9 +310,9 @@ async def dbt_ls(ls_request: DbtLsRequest):
 
 
 @router.post("/api/dbt-show-model")
-async def dbt_show_model(show_request: DbtShowRequest, http_request: Request):
+async def dbt_show_model(show_request: DbtShowRequest, http_request: Request, user: CurrentUser = Depends(get_current_user)):
     """Run dbt show to preview model data using inline SQL query."""
-    path = Path(show_request.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, show_request.path)
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="Project path does not exist")
@@ -488,9 +501,9 @@ async def dbt_show_model(show_request: DbtShowRequest, http_request: Request):
 
 
 @router.post("/api/get-lineage")
-async def get_lineage(project_path: ProjectPath):
+async def get_lineage(project_path: ProjectPath, user: CurrentUser = Depends(get_current_user)):
     """Extract lineage information from dbt manifest.json."""
-    path = Path(project_path.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, project_path.path)
 
     if not path.exists() or not path.is_dir():
         raise HTTPException(status_code=404, detail="Project path not found")
@@ -550,9 +563,9 @@ async def get_lineage(project_path: ProjectPath):
 
 
 @router.post("/api/get-metadata")
-async def get_metadata(file_data: dict):
+async def get_metadata(file_data: dict, user: CurrentUser = Depends(get_current_user)):
     """Get metadata for a file using dbt's manifest.json."""
-    project_path = Path(file_data['projectPath']).expanduser().resolve()
+    project_path = resolve_under_root(user.sub, file_data['projectPath'])
     file_path = file_data['filePath']
 
     if not project_path.exists():
@@ -592,9 +605,9 @@ async def get_metadata(file_data: dict):
 
 
 @router.post("/api/get-compiled-sql")
-async def get_compiled_sql(file_data: dict):
+async def get_compiled_sql(file_data: dict, user: CurrentUser = Depends(get_current_user)):
     """Get compiled SQL for a model from target/compiled directory."""
-    project_path = Path(file_data['projectPath']).expanduser().resolve()
+    project_path = resolve_under_root(user.sub, file_data['projectPath'])
     file_path = file_data['filePath']
 
     if not project_path.exists():
@@ -658,11 +671,11 @@ async def get_compiled_sql(file_data: dict):
 
 
 @router.post("/api/get-profile-targets")
-async def get_profile_targets(project_path: ProjectPath):
+async def get_profile_targets(project_path: ProjectPath, user: CurrentUser = Depends(get_current_user)):
     """Get available targets from profiles.yml for the project."""
     import yaml
 
-    path = Path(project_path.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, project_path.path)
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="Project path does not exist")
@@ -747,11 +760,11 @@ class GetTargetDetailsRequest(BaseModel):
 
 
 @router.post("/api/get-target-details")
-async def get_target_details(request: GetTargetDetailsRequest):
+async def get_target_details(request: GetTargetDetailsRequest, user: CurrentUser = Depends(get_current_user)):
     """Get database and schema details for a specific target from profiles.yml."""
     import yaml
 
-    path = Path(request.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, request.path)
 
     if not path.exists():
         return {"success": False, "error": "Project path does not exist", "database": None, "schema": None}

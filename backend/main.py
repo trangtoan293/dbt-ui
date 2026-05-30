@@ -10,7 +10,8 @@ from routes.dbt_routes import router as dbt_router
 from routes.venv_routes import router as venv_router
 from routes.env_routes import router as env_router
 from routes.metadv_routes import router as metadv_router
-from auth import verify_credentials, is_auth_enabled
+from auth import get_current_user, CurrentUser
+from fastapi import Request
 
 def is_metadv_enabled() -> bool:
     """Check if MetaDV feature is enabled via environment variable."""
@@ -42,12 +43,12 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
-# Include routers with authentication dependency if auth is enabled
-auth_dependency = [Depends(verify_credentials)] if is_auth_enabled() else []
+# Authentication is mandatory on every router. No optional/disabled path.
+auth_dependency = [Depends(get_current_user)]
 
 app.include_router(file_router, dependencies=auth_dependency)
 app.include_router(git_router, dependencies=auth_dependency)
@@ -55,9 +56,13 @@ app.include_router(dbt_router, dependencies=auth_dependency)
 app.include_router(venv_router, dependencies=auth_dependency)
 app.include_router(env_router, dependencies=auth_dependency)
 
-# Only include MetaDV router if the feature is enabled
 if is_metadv_enabled():
     app.include_router(metadv_router, dependencies=auth_dependency)
+
+
+@app.get("/api/me")
+async def me(user: CurrentUser = Depends(get_current_user)):
+    return {"sub": user.sub, "email": user.email, "roles": user.roles}
 
 
 @app.get("/")

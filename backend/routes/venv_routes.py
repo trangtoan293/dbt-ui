@@ -1,5 +1,5 @@
 """Virtual environment management API routes."""
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pathlib import Path
 from typing import Dict
 import subprocess
@@ -16,16 +16,18 @@ from utils.venv_utils import (
 from utils.dbt_utils import get_dbt_env
 from utils.operation_lock import acquire_lock, release_lock, get_lock_status
 from utils.subprocess_utils import run_command
+from auth import get_current_user, CurrentUser
+from utils.user_paths import resolve_under_root
 
 router = APIRouter()
 
 
-def _recreate_venv_sync(project_path: ProjectPath):
+def _recreate_venv_sync(project_path: ProjectPath, user_id: str):
     """Synchronous helper for recreating venv - runs in thread pool."""
     # Collect output logs
     output_lines = []
 
-    path = Path(project_path.path).expanduser().resolve()
+    path = resolve_under_root(user_id, project_path.path)
 
     if not path.exists():
         raise HTTPException(status_code=404, detail={
@@ -320,9 +322,9 @@ def _recreate_venv_sync(project_path: ProjectPath):
 
 
 @router.post("/api/recreate-venv")
-async def recreate_venv(project_path: ProjectPath):
+async def recreate_venv(project_path: ProjectPath, user: CurrentUser = Depends(get_current_user)):
     """Delete existing venv and recreate it with all dependencies."""
-    path = Path(project_path.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, project_path.path)
     path_str = str(path)
 
     # Check if another operation is running for this worktree
@@ -342,7 +344,7 @@ async def recreate_venv(project_path: ProjectPath):
 
     try:
         # Run the blocking operation in a thread pool to avoid blocking the event loop
-        result = await asyncio.to_thread(_recreate_venv_sync, project_path)
+        result = await asyncio.to_thread(_recreate_venv_sync, project_path, user.sub)
         return result
     except HTTPException:
         raise
@@ -353,9 +355,9 @@ async def recreate_venv(project_path: ProjectPath):
 
 
 @router.post("/api/check-venv")
-async def check_venv(project_path: ProjectPath):
+async def check_venv(project_path: ProjectPath, user: CurrentUser = Depends(get_current_user)):
     """Check if virtual environment exists for the project."""
-    path = Path(project_path.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, project_path.path)
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="Project path does not exist")

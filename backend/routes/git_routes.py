@@ -1,5 +1,5 @@
 """Git-related API routes."""
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pathlib import Path
 from typing import List
 import subprocess
@@ -9,6 +9,8 @@ import re
 import os
 import json
 import base64
+from auth import get_current_user, CurrentUser
+from utils.user_paths import resolve_under_root, user_root
 
 from models import (
     ProjectPath, GitRepoUrl, GitTrackedRequest, RestoreFileRequest,
@@ -20,6 +22,7 @@ from utils.input_validation import (
     validate_file_path, validate_commit_message
 )
 from utils.subprocess_utils import run_command, run_git_command, git_askpass_env
+from utils.audit import audit
 
 router = APIRouter()
 
@@ -63,7 +66,7 @@ def set_git_credentials_cookie(response: Response, git_root: str, username: str,
         max_age=GIT_CREDS_COOKIE_MAX_AGE,
         httponly=True,
         samesite="lax",
-        secure=False,  # Set to True in production with HTTPS
+        secure=True,
     )
 
 
@@ -216,7 +219,7 @@ def get_git_file_status(project_path: Path) -> GitFileStatus:
 
 
 @router.post("/api/clone-git-repo")
-async def clone_git_repo(git_repo: GitRepoUrl, http_request: Request, response: Response):
+async def clone_git_repo(git_repo: GitRepoUrl, http_request: Request, response: Response, user: CurrentUser = Depends(get_current_user)):
     """Clone a Git repository to a local cache directory and return the path."""
     git_url = git_repo.git_url.strip()
     username = git_repo.username
@@ -263,7 +266,7 @@ async def clone_git_repo(git_repo: GitRepoUrl, http_request: Request, response: 
     url_hash = hashlib.md5(git_url.encode()).hexdigest()[:12]
 
     # Create cache directory (configurable via GIT_REPOS_PATH env var)
-    cache_dir = get_git_repos_path()
+    cache_dir = user_root(user.sub)
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     # Extract repo name from URL for readability
@@ -368,9 +371,9 @@ async def clone_git_repo(git_repo: GitRepoUrl, http_request: Request, response: 
 
 
 @router.post("/api/git-modified-files")
-async def get_git_modified_files(project_path: ProjectPath):
+async def get_git_modified_files(project_path: ProjectPath, user: CurrentUser = Depends(get_current_user)):
     """Get git file status including modified, deleted, and untracked files."""
-    path = Path(project_path.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, project_path.path)
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="Project path does not exist")
@@ -389,9 +392,9 @@ async def get_git_modified_files(project_path: ProjectPath):
 
 
 @router.post("/api/git-is-tracked")
-async def git_is_tracked(request: GitTrackedRequest):
+async def git_is_tracked(request: GitTrackedRequest, user: CurrentUser = Depends(get_current_user)):
     """Check if a file or folder contains git-tracked content."""
-    project_path = Path(request.path).expanduser().resolve()
+    project_path = resolve_under_root(user.sub, request.path)
 
     print(f"[git-is-tracked] Request: path={request.path}, file_path={request.file_path}")
     print(f"[git-is-tracked] Resolved project_path: {project_path}")
@@ -453,9 +456,9 @@ async def git_is_tracked(request: GitTrackedRequest):
 
 
 @router.post("/api/restore-file")
-async def restore_file(request: RestoreFileRequest):
+async def restore_file(request: RestoreFileRequest, user: CurrentUser = Depends(get_current_user)):
     """Restore a deleted file from git HEAD."""
-    project_path = Path(request.path).expanduser().resolve()
+    project_path = resolve_under_root(user.sub, request.path)
 
     if not project_path.exists():
         raise HTTPException(status_code=404, detail="Project path does not exist")
@@ -510,7 +513,7 @@ def sanitize_branch_name(name: str) -> str:
 
 
 @router.post("/api/setup-worktree")
-async def setup_worktree(request: SetupWorktreeRequest):
+async def setup_worktree(request: SetupWorktreeRequest, user: CurrentUser = Depends(get_current_user)):
     """Create a user branch and worktree for isolated work.
 
     Creates a branch named '<user_name>-main' and adds a locked worktree for the user.
@@ -520,7 +523,7 @@ async def setup_worktree(request: SetupWorktreeRequest):
     user_name = validate_git_user_name(request.user_name)
     user_email = validate_git_user_email(request.user_email)
 
-    repo_path = Path(request.path).expanduser().resolve()
+    repo_path = resolve_under_root(user.sub, request.path)
 
     if not repo_path.exists():
         raise HTTPException(status_code=404, detail="Repository path does not exist")
@@ -616,9 +619,9 @@ async def setup_worktree(request: SetupWorktreeRequest):
 
 
 @router.post("/api/git-branch")
-async def get_git_branch(project_path: ProjectPath):
+async def get_git_branch(project_path: ProjectPath, user: CurrentUser = Depends(get_current_user)):
     """Get the current git branch name for a project path."""
-    path = Path(project_path.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, project_path.path)
 
     if not path.exists():
         return {"branch": ""}
@@ -636,9 +639,9 @@ async def get_git_branch(project_path: ProjectPath):
 
 
 @router.post("/api/git-stage")
-async def git_stage_files(request: GitStageRequest):
+async def git_stage_files(request: GitStageRequest, user: CurrentUser = Depends(get_current_user)):
     """Stage files for commit."""
-    path = Path(request.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, request.path)
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="Project path does not exist")
@@ -692,9 +695,9 @@ async def git_stage_files(request: GitStageRequest):
 
 
 @router.post("/api/git-unstage")
-async def git_unstage_files(request: GitStageRequest):
+async def git_unstage_files(request: GitStageRequest, user: CurrentUser = Depends(get_current_user)):
     """Unstage files from the staging area."""
-    path = Path(request.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, request.path)
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="Project path does not exist")
@@ -748,9 +751,9 @@ async def git_unstage_files(request: GitStageRequest):
 
 
 @router.post("/api/git-staged-files")
-async def git_get_staged_files(request: GitStagedFilesRequest):
+async def git_get_staged_files(request: GitStagedFilesRequest, user: CurrentUser = Depends(get_current_user)):
     """Get list of currently staged files."""
-    path = Path(request.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, request.path)
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="Project path does not exist")
@@ -791,14 +794,14 @@ async def git_get_staged_files(request: GitStagedFilesRequest):
 
 
 @router.post("/api/git-commit")
-async def git_commit(request: GitCommitRequest):
+async def git_commit(request: GitCommitRequest, user: CurrentUser = Depends(get_current_user)):
     """Create a git commit with the staged files."""
     # Validate all inputs for security
     user_name = validate_git_user_name(request.user_name)
     user_email = validate_git_user_email(request.user_email)
     message = validate_commit_message(request.message)
 
-    path = Path(request.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, request.path)
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="Project path does not exist")
@@ -836,6 +839,8 @@ async def git_commit(request: GitCommitRequest):
 
         print(f"[git-commit] Created commit {commit_hash}: {message[:50]}...")
 
+        audit(sub=user.sub, action="git_commit", target=str(path), extra={"message": message[:80]})
+
         return {
             "success": True,
             "commit_hash": commit_hash,
@@ -851,7 +856,7 @@ async def git_commit(request: GitCommitRequest):
 
 
 @router.post("/api/git-create-branch")
-async def git_create_branch(request: GitCreateBranchRequest):
+async def git_create_branch(request: GitCreateBranchRequest, user: CurrentUser = Depends(get_current_user)):
     """Create a new git branch from the latest state of the default branch.
 
     This endpoint:
@@ -859,7 +864,7 @@ async def git_create_branch(request: GitCreateBranchRequest):
     2. Creates the new branch from origin/<default_branch>
     3. Optionally checks out the new branch
     """
-    path = Path(request.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, request.path)
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="Project path does not exist")
@@ -921,6 +926,8 @@ async def git_create_branch(request: GitCreateBranchRequest):
 
         print(f"[git-create-branch] Created branch: {sanitized} from {start_point}, checkout: {request.checkout}")
 
+        audit(sub=user.sub, action="git_create_branch", target=str(path), extra={"branch": sanitized})
+
         return {
             "success": True,
             "branch": sanitized,
@@ -937,9 +944,9 @@ async def git_create_branch(request: GitCreateBranchRequest):
 
 
 @router.post("/api/git-list-branches")
-async def git_list_branches(project_path: ProjectPath):
+async def git_list_branches(project_path: ProjectPath, user: CurrentUser = Depends(get_current_user)):
     """List all git branches."""
-    path = Path(project_path.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, project_path.path)
 
     if not path.exists():
         return {"branches": [], "current": "", "default_branch": "", "worktree_branches": []}
@@ -995,12 +1002,12 @@ async def git_list_branches(project_path: ProjectPath):
 
 
 @router.post("/api/git-checkout-branch")
-async def git_checkout_branch(request: GitCreateBranchRequest):
+async def git_checkout_branch(request: GitCreateBranchRequest, user: CurrentUser = Depends(get_current_user)):
     """Checkout an existing git branch."""
     # Validate branch name for security
     branch_name = validate_git_branch_name(request.branch_name)
 
-    path = Path(request.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, request.path)
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="Project path does not exist")
@@ -1034,9 +1041,9 @@ async def git_checkout_branch(request: GitCreateBranchRequest):
 
 
 @router.post("/api/git-branch-info")
-async def git_branch_info(project_path: ProjectPath):
+async def git_branch_info(project_path: ProjectPath, user: CurrentUser = Depends(get_current_user)):
     """Get info about the current branch including remote tracking status."""
-    path = Path(project_path.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, project_path.path)
 
     if not path.exists():
         return {
@@ -1093,9 +1100,9 @@ async def git_branch_info(project_path: ProjectPath):
 
 
 @router.post("/api/git-push")
-async def git_push(request: GitPushPullRequest, http_request: Request, response: Response):
+async def git_push(request: GitPushPullRequest, http_request: Request, response: Response, user: CurrentUser = Depends(get_current_user)):
     """Push current branch to origin. Creates upstream if it doesn't exist."""
-    path = Path(request.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, request.path)
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="Project path does not exist")
@@ -1201,9 +1208,9 @@ async def git_push(request: GitPushPullRequest, http_request: Request, response:
 
 
 @router.post("/api/git-pull")
-async def git_pull(request: GitPushPullRequest, http_request: Request, response: Response):
+async def git_pull(request: GitPushPullRequest, http_request: Request, response: Response, user: CurrentUser = Depends(get_current_user)):
     """Pull changes from upstream for the current branch."""
-    path = Path(request.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, request.path)
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="Project path does not exist")
@@ -1314,12 +1321,12 @@ async def git_pull(request: GitPushPullRequest, http_request: Request, response:
 
 
 @router.post("/api/git-delete-branch")
-async def git_delete_branch(request: GitCreateBranchRequest):
+async def git_delete_branch(request: GitCreateBranchRequest, user: CurrentUser = Depends(get_current_user)):
     """Delete a git branch."""
     # Validate branch name for security
     branch_name = validate_git_branch_name(request.branch_name)
 
-    path = Path(request.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, request.path)
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="Project path does not exist")
