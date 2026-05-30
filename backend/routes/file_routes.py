@@ -15,6 +15,8 @@ from utils.user_paths import resolve_under_root, user_root
 
 router = APIRouter()
 
+MAX_READ_BYTES = 5 * 1024 * 1024  # 5 MB
+
 
 @router.get("/api/default-project-path")
 async def get_default_project_path():
@@ -189,6 +191,9 @@ async def read_file(file_data: dict, user: CurrentUser = Depends(get_current_use
         file_path.relative_to(project_path)
     except ValueError:
         raise HTTPException(status_code=403, detail="Access denied: File outside project directory")
+
+    if file_path.stat().st_size > MAX_READ_BYTES:
+        raise HTTPException(status_code=413, detail="File too large to open")
 
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
