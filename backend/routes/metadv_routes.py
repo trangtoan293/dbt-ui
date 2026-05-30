@@ -1,6 +1,6 @@
 """MetaDV API routes."""
 import os
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Depends
 from pydantic import BaseModel
 from pathlib import Path
 from typing import Optional
@@ -13,6 +13,8 @@ from models import ProjectPath
 from utils.dbt_utils import get_dbt_env
 from routes.env_routes import get_env_vars_from_cookie
 from utils.subprocess_utils import run_command
+from auth import get_current_user, CurrentUser
+from utils.user_paths import resolve_under_root
 from metadv import (
     MetaDVGenerator,
     validate_metadv,
@@ -43,7 +45,7 @@ class MetaDVSourceColumnsRequest(BaseModel):
 
 
 @router.post("/api/check-metadv-package")
-async def check_metadv_package(project_path: ProjectPath):
+async def check_metadv_package(project_path: ProjectPath, user: CurrentUser = Depends(get_current_user)):
     """Check if a supported package is installed in the project.
 
     Supported packages:
@@ -54,7 +56,7 @@ async def check_metadv_package(project_path: ProjectPath):
     if not metadv_enabled:
         return {"has_metadv_package": False, "metadv_enabled": False, "error": None, "package_name": None}
 
-    path = Path(project_path.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, project_path.path)
 
     if not path.exists():
         return {"has_metadv_package": False, "metadv_enabled": True, "error": "Project path does not exist", "package_name": None}
@@ -69,12 +71,12 @@ async def check_metadv_package(project_path: ProjectPath):
 
 
 @router.post("/api/metadv-init")
-async def metadv_init(project_path: ProjectPath):
+async def metadv_init(project_path: ProjectPath, user: CurrentUser = Depends(get_current_user)):
     """Initialize MetaDV folder and metadv.yml file."""
     if not is_metadv_enabled():
         return {"success": False, "error": "MetaDV feature is disabled", "data": None}
 
-    path = Path(project_path.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, project_path.path)
 
     if not path.exists():
         return {"success": False, "error": "Project path does not exist", "data": None}
@@ -106,12 +108,12 @@ async def metadv_init(project_path: ProjectPath):
 
 
 @router.post("/api/metadv-read")
-async def metadv_read(project_path: ProjectPath):
+async def metadv_read(project_path: ProjectPath, user: CurrentUser = Depends(get_current_user)):
     """Read and parse metadv.yml file."""
     if not is_metadv_enabled():
         return {"success": False, "error": "MetaDV feature is disabled", "data": None}
 
-    path = Path(project_path.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, project_path.path)
 
     if not path.exists():
         return {"success": False, "error": "Project path does not exist", "data": None}
@@ -203,12 +205,12 @@ async def metadv_read(project_path: ProjectPath):
 
 
 @router.post("/api/metadv-save")
-async def metadv_save(request: MetaDVSaveRequest):
+async def metadv_save(request: MetaDVSaveRequest, user: CurrentUser = Depends(get_current_user)):
     """Save MetaDV data to metadv.yml file."""
     if not is_metadv_enabled():
         return {"success": False, "error": "MetaDV feature is disabled"}
 
-    path = Path(request.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, request.path)
 
     if not path.exists():
         return {"success": False, "error": "Project path does not exist"}
@@ -227,7 +229,7 @@ async def metadv_save(request: MetaDVSaveRequest):
 
 
 @router.post("/api/metadv-source-columns")
-async def metadv_source_columns(request: MetaDVSourceColumnsRequest, http_request: Request):
+async def metadv_source_columns(request: MetaDVSourceColumnsRequest, http_request: Request, user: CurrentUser = Depends(get_current_user)):
     """Fetch column names from a source model using dbt show.
 
     Uses the dbt ref() function to query an existing model.
@@ -236,7 +238,7 @@ async def metadv_source_columns(request: MetaDVSourceColumnsRequest, http_reques
     if not is_metadv_enabled():
         return {"success": False, "error": "MetaDV feature is disabled", "columns": []}
 
-    path = Path(request.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, request.path)
 
     if not path.exists():
         return {"success": False, "error": "Project path does not exist", "columns": []}
@@ -324,7 +326,7 @@ async def metadv_source_columns(request: MetaDVSourceColumnsRequest, http_reques
 
 
 @router.post("/api/metadv-validate")
-async def metadv_validate(project_path: ProjectPath):
+async def metadv_validate(project_path: ProjectPath, user: CurrentUser = Depends(get_current_user)):
     """Validate metadv.yml configuration.
 
     Returns a list of errors and warnings:
@@ -336,7 +338,7 @@ async def metadv_validate(project_path: ProjectPath):
     if not is_metadv_enabled():
         return {"success": False, "error": "MetaDV feature is disabled", "errors": [], "warnings": []}
 
-    path = Path(project_path.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, project_path.path)
     package_name = detect_installed_dv_package(path)
 
     if not package_name:
@@ -352,7 +354,7 @@ async def metadv_validate(project_path: ProjectPath):
 
 
 @router.post("/api/metadv-generate")
-async def metadv_generate(project_path: ProjectPath):
+async def metadv_generate(project_path: ProjectPath, user: CurrentUser = Depends(get_current_user)):
     """Generate SQL models from metadv.yml configuration.
 
     Generates the following structure:
@@ -364,7 +366,7 @@ async def metadv_generate(project_path: ProjectPath):
     if not is_metadv_enabled():
         return {"success": False, "error": "MetaDV feature is disabled", "generated_files": []}
 
-    path = Path(project_path.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, project_path.path)
 
     if not path.exists():
         return {"success": False, "error": "Project path does not exist", "generated_files": []}

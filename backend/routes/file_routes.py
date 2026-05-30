@@ -1,5 +1,5 @@
 """File operation API routes."""
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pathlib import Path
 import shutil
 
@@ -10,6 +10,8 @@ from models import (
 from routes.git_routes import get_git_file_status, get_git_repos_path
 from utils.merge_utils import simple_merge
 from utils.input_validation import validate_file_path
+from auth import get_current_user, CurrentUser
+from utils.user_paths import resolve_under_root, user_root
 
 router = APIRouter()
 
@@ -21,9 +23,10 @@ async def get_default_project_path():
 
 
 @router.post("/api/validate-path")
-async def validate_path(project_path: ProjectPath):
-    """Validate if the given path exists and is a dbt project."""
-    path = Path(project_path.path).expanduser().resolve()
+async def validate_path(project_path: ProjectPath,
+                        user: CurrentUser = Depends(get_current_user)):
+    """Validate that the user's sub-path is a dbt project."""
+    path = resolve_under_root(user.sub, project_path.path)
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="Path does not exist")
@@ -47,9 +50,10 @@ async def validate_path(project_path: ProjectPath):
 
 
 @router.post("/api/list-directory-shallow")
-async def list_directory_shallow(request: ListDirectoryRequest):
+async def list_directory_shallow(request: ListDirectoryRequest,
+                                 user: CurrentUser = Depends(get_current_user)):
     """List immediate children of a directory (shallow, for lazy loading)."""
-    project_path = Path(request.path).expanduser().resolve()
+    project_path = resolve_under_root(user.sub, request.path)
 
     if not project_path.exists():
         raise HTTPException(status_code=404, detail="Project path does not exist")
@@ -169,10 +173,10 @@ async def list_directory_shallow(request: ListDirectoryRequest):
 
 
 @router.post("/api/read-file")
-async def read_file(file_data: dict):
+async def read_file(file_data: dict, user: CurrentUser = Depends(get_current_user)):
     """Read the contents of a file."""
-    project_path = Path(file_data['projectPath']).expanduser().resolve()
-    file_path = project_path / file_data['filePath']
+    project_path = resolve_under_root(user.sub, file_data['projectPath'])
+    file_path = (project_path / file_data['filePath']).resolve()
 
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File does not exist")
@@ -180,9 +184,9 @@ async def read_file(file_data: dict):
     if not file_path.is_file():
         raise HTTPException(status_code=400, detail="Path is not a file")
 
-    # Check if file is within project directory (security)
+    # Ensure file is still within project directory (nested traversal guard)
     try:
-        file_path.resolve().relative_to(project_path.resolve())
+        file_path.relative_to(project_path)
     except ValueError:
         raise HTTPException(status_code=403, detail="Access denied: File outside project directory")
 
@@ -207,10 +211,10 @@ async def read_file(file_data: dict):
 
 
 @router.post("/api/write-file")
-async def write_file(file_data: dict):
+async def write_file(file_data: dict, user: CurrentUser = Depends(get_current_user)):
     """Write content to a file with conflict detection and three-way merge."""
-    project_path = Path(file_data['projectPath']).expanduser().resolve()
-    file_path = project_path / file_data['filePath']
+    project_path = resolve_under_root(user.sub, file_data['projectPath'])
+    file_path = (project_path / file_data['filePath']).resolve()
     content = file_data['content']
     original_content = file_data.get('originalContent')  # Content when file was loaded
 
@@ -220,9 +224,9 @@ async def write_file(file_data: dict):
     if not file_path.is_file():
         raise HTTPException(status_code=400, detail="Path is not a file")
 
-    # Check if file is within project directory (security)
+    # Ensure file is still within project directory (nested traversal guard)
     try:
-        file_path.resolve().relative_to(project_path.resolve())
+        file_path.relative_to(project_path)
     except ValueError:
         raise HTTPException(status_code=403, detail="Access denied: File outside project directory")
 
@@ -273,10 +277,9 @@ async def write_file(file_data: dict):
 
 
 @router.post("/api/browse-directories")
-async def browse_directories(request: dict):
-    """Browse directories within the git-repos path only."""
-    # Root path is always git-repos (configurable via GIT_REPOS_PATH env var)
-    root_path = get_git_repos_path()
+async def browse_directories(request: dict, user: CurrentUser = Depends(get_current_user)):
+    """Browse directories within the user's root path only."""
+    root_path = user_root(user.sub)
     if not root_path.exists():
         root_path.mkdir(parents=True, exist_ok=True)
 
@@ -341,9 +344,10 @@ async def browse_directories(request: dict):
 
 
 @router.post("/api/create-file")
-async def create_file(request: CreateFileRequest):
+async def create_file(request: CreateFileRequest,
+                      user: CurrentUser = Depends(get_current_user)):
     """Create a new empty file with unique 'untitled' name."""
-    project_path = Path(request.path).expanduser().resolve()
+    project_path = resolve_under_root(user.sub, request.path)
 
     if not project_path.exists():
         raise HTTPException(status_code=404, detail="Project path does not exist")
@@ -392,13 +396,14 @@ async def create_file(request: CreateFileRequest):
 
 
 @router.post("/api/rename-file")
-async def rename_file(request: RenameFileRequest):
+async def rename_file(request: RenameFileRequest,
+                      user: CurrentUser = Depends(get_current_user)):
     """Rename a file or folder in the project."""
     # Validate file paths for security (check for dangerous characters and traversal)
     validated_old_path = validate_file_path(request.old_path, "old path")
     validated_new_path = validate_file_path(request.new_path, "new path")
 
-    project_path = Path(request.path).expanduser().resolve()
+    project_path = resolve_under_root(user.sub, request.path)
 
     if not project_path.exists():
         raise HTTPException(status_code=404, detail="Project path does not exist")
@@ -438,12 +443,13 @@ async def rename_file(request: RenameFileRequest):
 
 
 @router.post("/api/delete-file")
-async def delete_file(request: DeleteFileRequest):
+async def delete_file(request: DeleteFileRequest,
+                      user: CurrentUser = Depends(get_current_user)):
     """Delete a file or folder from the project."""
     # Validate file path for security (check for dangerous characters and traversal)
     validated_file_path = validate_file_path(request.file_path, "file path")
 
-    project_path = Path(request.path).expanduser().resolve()
+    project_path = resolve_under_root(user.sub, request.path)
 
     if not project_path.exists():
         raise HTTPException(status_code=404, detail="Project path does not exist")

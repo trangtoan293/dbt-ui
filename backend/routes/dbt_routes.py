@@ -1,5 +1,5 @@
 """dbt command API routes."""
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Request
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Request, Depends
 from pydantic import BaseModel
 from pathlib import Path
 from typing import Dict, Optional
@@ -16,6 +16,8 @@ from utils.operation_lock import acquire_lock, release_lock, is_locked, get_lock
 from routes.env_routes import get_env_vars_from_cookie
 from utils.input_validation import validate_dbt_selector, validate_dbt_target
 from utils.subprocess_utils import run_command
+from auth import get_current_user, CurrentUser
+from utils.user_paths import resolve_under_root
 
 router = APIRouter()
 
@@ -27,9 +29,9 @@ VALID_DBT_COMMANDS = {"compile", "run", "test", "seed"}
 
 
 @router.post("/api/dbt-command-status")
-async def get_dbt_command_status(project_path: ProjectPath):
+async def get_dbt_command_status(project_path: ProjectPath, user: CurrentUser = Depends(get_current_user)):
     """Get the status of a background dbt command job."""
-    path = Path(project_path.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, project_path.path)
     path_str = str(path)
 
     if path_str not in dbt_command_status:
@@ -46,13 +48,13 @@ async def get_compilation_status(project_path: ProjectPath):
 
 
 @router.post("/api/dbt-operation-status")
-async def get_dbt_operation_status(project_path: ProjectPath):
+async def get_dbt_operation_status(project_path: ProjectPath, user: CurrentUser = Depends(get_current_user)):
     """Get the current dbt operation status for a specific worktree (for disabling buttons in UI).
 
     Also returns last completion info so other users can detect when operations
     finish and refresh their state accordingly.
     """
-    path = Path(project_path.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, project_path.path)
     path_str = str(path)
 
     status = get_lock_status(path_str)
@@ -134,9 +136,9 @@ def run_dbt_command_task(path: Path, command: str, selector: str = "", target: s
 
 
 @router.post("/api/dbt-command")
-async def dbt_command(action: DbtCommandRequest, background_tasks: BackgroundTasks, request: Request):
+async def dbt_command(action: DbtCommandRequest, background_tasks: BackgroundTasks, request: Request, user: CurrentUser = Depends(get_current_user)):
     """Unified endpoint to run any dbt command (compile, run, test, seed) in background."""
-    path = Path(action.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, action.path)
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="Project path does not exist")
@@ -230,9 +232,9 @@ async def dbt_test_model(action: DbtCommandRequest, background_tasks: Background
 
 
 @router.post("/api/dbt-ls")
-async def dbt_ls(ls_request: DbtLsRequest):
+async def dbt_ls(ls_request: DbtLsRequest, user: CurrentUser = Depends(get_current_user)):
     """Run dbt ls to get list of models matching a selector."""
-    path = Path(ls_request.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, ls_request.path)
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="Project path does not exist")
@@ -297,9 +299,9 @@ async def dbt_ls(ls_request: DbtLsRequest):
 
 
 @router.post("/api/dbt-show-model")
-async def dbt_show_model(show_request: DbtShowRequest, http_request: Request):
+async def dbt_show_model(show_request: DbtShowRequest, http_request: Request, user: CurrentUser = Depends(get_current_user)):
     """Run dbt show to preview model data using inline SQL query."""
-    path = Path(show_request.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, show_request.path)
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="Project path does not exist")
@@ -488,9 +490,9 @@ async def dbt_show_model(show_request: DbtShowRequest, http_request: Request):
 
 
 @router.post("/api/get-lineage")
-async def get_lineage(project_path: ProjectPath):
+async def get_lineage(project_path: ProjectPath, user: CurrentUser = Depends(get_current_user)):
     """Extract lineage information from dbt manifest.json."""
-    path = Path(project_path.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, project_path.path)
 
     if not path.exists() or not path.is_dir():
         raise HTTPException(status_code=404, detail="Project path not found")
@@ -550,9 +552,9 @@ async def get_lineage(project_path: ProjectPath):
 
 
 @router.post("/api/get-metadata")
-async def get_metadata(file_data: dict):
+async def get_metadata(file_data: dict, user: CurrentUser = Depends(get_current_user)):
     """Get metadata for a file using dbt's manifest.json."""
-    project_path = Path(file_data['projectPath']).expanduser().resolve()
+    project_path = resolve_under_root(user.sub, file_data['projectPath'])
     file_path = file_data['filePath']
 
     if not project_path.exists():
@@ -592,9 +594,9 @@ async def get_metadata(file_data: dict):
 
 
 @router.post("/api/get-compiled-sql")
-async def get_compiled_sql(file_data: dict):
+async def get_compiled_sql(file_data: dict, user: CurrentUser = Depends(get_current_user)):
     """Get compiled SQL for a model from target/compiled directory."""
-    project_path = Path(file_data['projectPath']).expanduser().resolve()
+    project_path = resolve_under_root(user.sub, file_data['projectPath'])
     file_path = file_data['filePath']
 
     if not project_path.exists():
@@ -658,11 +660,11 @@ async def get_compiled_sql(file_data: dict):
 
 
 @router.post("/api/get-profile-targets")
-async def get_profile_targets(project_path: ProjectPath):
+async def get_profile_targets(project_path: ProjectPath, user: CurrentUser = Depends(get_current_user)):
     """Get available targets from profiles.yml for the project."""
     import yaml
 
-    path = Path(project_path.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, project_path.path)
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="Project path does not exist")
@@ -747,11 +749,11 @@ class GetTargetDetailsRequest(BaseModel):
 
 
 @router.post("/api/get-target-details")
-async def get_target_details(request: GetTargetDetailsRequest):
+async def get_target_details(request: GetTargetDetailsRequest, user: CurrentUser = Depends(get_current_user)):
     """Get database and schema details for a specific target from profiles.yml."""
     import yaml
 
-    path = Path(request.path).expanduser().resolve()
+    path = resolve_under_root(user.sub, request.path)
 
     if not path.exists():
         return {"success": False, "error": "Project path does not exist", "database": None, "schema": None}
