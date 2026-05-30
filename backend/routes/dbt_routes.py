@@ -21,8 +21,8 @@ from utils.user_paths import resolve_under_root
 
 router = APIRouter()
 
-# Global dbt command status tracker (for all background dbt operations)
-dbt_command_status: Dict[str, Dict[str, any]] = {}
+# Keyed by (user_sub, resolved_path) so one user can never read another's output.
+dbt_command_status: Dict[tuple, Dict[str, any]] = {}
 
 # Valid dbt commands for the unified endpoint
 VALID_DBT_COMMANDS = {"compile", "run", "test", "seed"}
@@ -32,19 +32,19 @@ VALID_DBT_COMMANDS = {"compile", "run", "test", "seed"}
 async def get_dbt_command_status(project_path: ProjectPath, user: CurrentUser = Depends(get_current_user)):
     """Get the status of a background dbt command job."""
     path = resolve_under_root(user.sub, project_path.path)
-    path_str = str(path)
+    key = (user.sub, str(path))
 
-    if path_str not in dbt_command_status:
-        return {"status": "not_started"}
+    if key not in dbt_command_status:
+        return {"status": "idle"}
 
-    return dbt_command_status[path_str]
+    return dbt_command_status[key]
 
 
 # Keep old endpoint for backward compatibility
 @router.post("/api/compilation-status")
-async def get_compilation_status(project_path: ProjectPath):
+async def get_compilation_status(project_path: ProjectPath, user: CurrentUser = Depends(get_current_user)):
     """Get the status of a compilation job. (Deprecated: use /api/dbt-command-status)"""
-    return await get_dbt_command_status(project_path)
+    return await get_dbt_command_status(project_path, user)
 
 
 @router.post("/api/dbt-operation-status")
@@ -67,12 +67,13 @@ async def get_dbt_operation_status(project_path: ProjectPath, user: CurrentUser 
     }
 
 
-def run_dbt_command_task(path: Path, command: str, selector: str = "", target: str = "", full_refresh: bool = False, env_vars: dict = None):
+def run_dbt_command_task(sub: str, path: Path, command: str, selector: str = "", target: str = "", full_refresh: bool = False, env_vars: dict = None):
     """Background task to run any dbt command and update dbt_command_status."""
     path_str = str(path)
+    key = (sub, path_str)
 
     try:
-        dbt_command_status[path_str] = {
+        dbt_command_status[key] = {
             "status": "running",
             "command": command,
             "selector": selector,
@@ -100,7 +101,7 @@ def run_dbt_command_task(path: Path, command: str, selector: str = "", target: s
         result = run_command(cmd, path, timeout=300, env=env)
 
         if result.success:
-            dbt_command_status[path_str] = {
+            dbt_command_status[key] = {
                 "status": "success",
                 "command": command,
                 "selector": selector,
@@ -108,7 +109,7 @@ def run_dbt_command_task(path: Path, command: str, selector: str = "", target: s
                 "output": result.stdout
             }
         else:
-            dbt_command_status[path_str] = {
+            dbt_command_status[key] = {
                 "status": "failed",
                 "command": command,
                 "selector": selector,
@@ -116,7 +117,7 @@ def run_dbt_command_task(path: Path, command: str, selector: str = "", target: s
                 "error": result.error
             }
     except subprocess.TimeoutExpired:
-        dbt_command_status[path_str] = {
+        dbt_command_status[key] = {
             "status": "failed",
             "command": command,
             "selector": selector,
@@ -124,7 +125,7 @@ def run_dbt_command_task(path: Path, command: str, selector: str = "", target: s
             "error": f"dbt {command} timed out after 5 minutes"
         }
     except Exception as e:
-        dbt_command_status[path_str] = {
+        dbt_command_status[key] = {
             "status": "failed",
             "command": command,
             "selector": selector,
@@ -189,7 +190,7 @@ async def dbt_command(action: DbtCommandRequest, background_tasks: BackgroundTas
     env_vars = get_env_vars_from_cookie(request, str(path))
 
     # Always run in background
-    background_tasks.add_task(run_dbt_command_task, path, command, selector, target, action.full_refresh, env_vars)
+    background_tasks.add_task(run_dbt_command_task, user.sub, path, command, selector, target, action.full_refresh, env_vars)
 
     return {
         "status": "started",
@@ -201,34 +202,34 @@ async def dbt_command(action: DbtCommandRequest, background_tasks: BackgroundTas
 
 # Keep old compile endpoint for backward compatibility
 @router.post("/api/dbt-compile-model")
-async def dbt_compile_model(action: DbtCommandRequest, background_tasks: BackgroundTasks, request: Request):
+async def dbt_compile_model(action: DbtCommandRequest, background_tasks: BackgroundTasks, request: Request, user: CurrentUser = Depends(get_current_user)):
     """Compile dbt model(s) using project's venv dbt. (Deprecated: use /api/dbt-command)"""
     action.command = "compile"
-    return await dbt_command(action, background_tasks, request)
+    return await dbt_command(action, background_tasks, request, user)
 
 
 # Keep old run endpoint for backward compatibility - now runs in background
 @router.post("/api/dbt-run-model")
-async def dbt_run_model(action: DbtCommandRequest, background_tasks: BackgroundTasks, request: Request):
+async def dbt_run_model(action: DbtCommandRequest, background_tasks: BackgroundTasks, request: Request, user: CurrentUser = Depends(get_current_user)):
     """Run dbt model(s). (Deprecated: use /api/dbt-command)"""
     action.command = "run"
-    return await dbt_command(action, background_tasks, request)
+    return await dbt_command(action, background_tasks, request, user)
 
 
 # Keep old seed endpoint for backward compatibility - now runs in background
 @router.post("/api/dbt-seed")
-async def dbt_seed(action: DbtCommandRequest, background_tasks: BackgroundTasks, request: Request):
+async def dbt_seed(action: DbtCommandRequest, background_tasks: BackgroundTasks, request: Request, user: CurrentUser = Depends(get_current_user)):
     """Run dbt seed. (Deprecated: use /api/dbt-command)"""
     action.command = "seed"
-    return await dbt_command(action, background_tasks, request)
+    return await dbt_command(action, background_tasks, request, user)
 
 
 # Keep old test endpoint for backward compatibility - now runs in background
 @router.post("/api/dbt-test-model")
-async def dbt_test_model(action: DbtCommandRequest, background_tasks: BackgroundTasks, request: Request):
+async def dbt_test_model(action: DbtCommandRequest, background_tasks: BackgroundTasks, request: Request, user: CurrentUser = Depends(get_current_user)):
     """Test dbt model(s). (Deprecated: use /api/dbt-command)"""
     action.command = "test"
-    return await dbt_command(action, background_tasks, request)
+    return await dbt_command(action, background_tasks, request, user)
 
 
 @router.post("/api/dbt-ls")
