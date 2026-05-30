@@ -19,6 +19,9 @@ from utils.subprocess_utils import run_command
 from auth import get_current_user, CurrentUser
 from utils.user_paths import resolve_under_root
 from utils.secret_scrub import scrub
+from utils.rate_limit import RateLimiter
+
+_dbt_rate_limiter = RateLimiter(max_calls=10, window_seconds=60)
 
 router = APIRouter()
 
@@ -156,6 +159,8 @@ async def dbt_command(action: DbtCommandRequest, background_tasks: BackgroundTas
     # Validate selector and target for security
     selector = validate_dbt_selector(action.selector, "selector")
     target = validate_dbt_target(action.target)
+
+    _dbt_rate_limiter.check(user.sub)
 
     path_str = str(path)
 
