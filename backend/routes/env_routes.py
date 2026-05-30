@@ -58,7 +58,7 @@ def set_env_vars_cookie(response: Response, project_path: str, env_vars: Dict[st
         max_age=COOKIE_MAX_AGE,
         httponly=True,
         samesite="lax",
-        secure=False,  # Set to True in production with HTTPS
+        secure=True,
     )
 
 

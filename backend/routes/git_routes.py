@@ -65,7 +65,7 @@ def set_git_credentials_cookie(response: Response, git_root: str, username: str,
         max_age=GIT_CREDS_COOKIE_MAX_AGE,
         httponly=True,
         samesite="lax",
-        secure=False,  # Set to True in production with HTTPS
+        secure=True,
     )
 
 
