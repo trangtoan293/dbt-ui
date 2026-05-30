@@ -22,6 +22,7 @@ from utils.input_validation import (
     validate_file_path, validate_commit_message
 )
 from utils.subprocess_utils import run_command, run_git_command, git_askpass_env
+from utils.audit import audit
 
 router = APIRouter()
 
@@ -838,6 +839,8 @@ async def git_commit(request: GitCommitRequest, user: CurrentUser = Depends(get_
 
         print(f"[git-commit] Created commit {commit_hash}: {message[:50]}...")
 
+        audit(sub=user.sub, action="git_commit", target=str(path), extra={"message": message[:80]})
+
         return {
             "success": True,
             "commit_hash": commit_hash,
@@ -922,6 +925,8 @@ async def git_create_branch(request: GitCreateBranchRequest, user: CurrentUser =
             raise HTTPException(status_code=500, detail=f"Failed to create branch: {result.stderr}")
 
         print(f"[git-create-branch] Created branch: {sanitized} from {start_point}, checkout: {request.checkout}")
+
+        audit(sub=user.sub, action="git_create_branch", target=str(path), extra={"branch": sanitized})
 
         return {
             "success": True,

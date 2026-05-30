@@ -162,6 +162,10 @@ async def dbt_command(action: DbtCommandRequest, background_tasks: BackgroundTas
 
     _dbt_rate_limiter.check(user.sub)
 
+    from utils.audit import audit as _audit
+    _audit(sub=user.sub, action=f"dbt_{command}", target=str(path),
+           extra={"selector": action.selector, "target_env": action.target})
+
     path_str = str(path)
 
     # Check if another operation is running for this worktree

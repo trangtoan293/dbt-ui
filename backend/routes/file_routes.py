@@ -12,6 +12,7 @@ from utils.merge_utils import simple_merge
 from utils.input_validation import validate_file_path
 from auth import get_current_user, CurrentUser
 from utils.user_paths import resolve_under_root, user_root
+from utils.audit import audit
 
 router = APIRouter()
 
@@ -268,6 +269,7 @@ async def write_file(file_data: dict, user: CurrentUser = Depends(get_current_us
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(merged_content)
 
+        audit(sub=user.sub, action="file_write", target=str(file_path))
         return {
             "success": True,
             "path": str(file_path.relative_to(project_path)),
@@ -376,6 +378,7 @@ async def create_file(request: CreateFileRequest,
             # Create the file
             file_path.touch()
             relative_path = f"{request.folder}/{base_name}" if request.folder else base_name
+            audit(sub=user.sub, action="file_create", target=str(file_path))
             return {"file_path": relative_path, "success": True}
 
         # File exists, try untitled2, untitled3, etc.
@@ -388,6 +391,7 @@ async def create_file(request: CreateFileRequest,
                 # Create the file
                 file_path.touch()
                 relative_path = f"{request.folder}/{candidate_name}" if request.folder else candidate_name
+                audit(sub=user.sub, action="file_create", target=str(file_path))
                 return {"file_path": relative_path, "success": True}
 
             counter += 1
@@ -438,6 +442,7 @@ async def rename_file(request: RenameFileRequest,
         # Rename the file or folder
         old_path.rename(new_path)
 
+        audit(sub=user.sub, action="file_rename", target=str(project_path))
         return {
             "success": True,
             "old_path": validated_old_path,
@@ -479,6 +484,7 @@ async def delete_file(request: DeleteFileRequest,
             # Delete the folder and all its contents
             shutil.rmtree(target_path)
 
+        audit(sub=user.sub, action="file_delete", target=str(target_path))
         return {
             "success": True,
             "deleted_path": validated_file_path
