@@ -11,6 +11,16 @@ ISSUER = os.environ.get("KEYCLOAK_ISSUER", "")
 JWKS_URI = os.environ.get("KEYCLOAK_JWKS_URI", "")
 AUDIENCE = os.environ.get("KEYCLOAK_AUDIENCE", "account")
 
+# Fail at startup if issuer is not configured — prevents silent issuer bypass.
+if not ISSUER:
+    import warnings
+    warnings.warn(
+        "KEYCLOAK_ISSUER is not set. Token issuer validation is disabled. "
+        "Set KEYCLOAK_ISSUER in production.",
+        RuntimeWarning,
+        stacklevel=1,
+    )
+
 _jwks_client: PyJWKClient | None = None
 
 
@@ -43,10 +53,10 @@ def verify_token(token: str) -> CurrentUser:
             issuer=ISSUER,
             options={"require": ["exp", "iss", "sub"]},
         )
-    except jwt.PyJWTError as e:
+    except jwt.PyJWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid token: {e}",
+            detail="Token validation failed",
             headers={"WWW-Authenticate": "Bearer"},
         )
     return CurrentUser(
