@@ -14,7 +14,7 @@ def _catalog_path() -> Path:
     return Path(os.environ.get("CATALOG_PATH", str(Path.home() / "catalog.json")))
 
 
-def _load() -> list:
+def load() -> list:
     p = _catalog_path()
     if not p.exists():
         return []
@@ -27,15 +27,11 @@ def _save(entries: list) -> None:
     p.write_text(json.dumps(entries, indent=2))
 
 
-def list_entries() -> list:
-    return _load()
-
-
-def get_entry(entry_id: str) -> dict:
-    for e in _load():
+def get(entry_id: str) -> dict | None:
+    for e in load():
         if e["id"] == entry_id:
             return e
-    raise HTTPException(status_code=404, detail="Project not found in catalog")
+    return None
 
 
 def add_entry(name: str, repo_path: str, main_branch: str = "main") -> dict:
@@ -45,12 +41,12 @@ def add_entry(name: str, repo_path: str, main_branch: str = "main") -> dict:
                             detail="repo_path is not a git repository")
     entry = {"id": uuid.uuid4().hex, "name": name,
              "repo_path": str(repo), "main_branch": main_branch}
-    entries = _load()
+    entries = load()
     entries.append(entry)
     _save(entries)
     return entry
 
 
 def remove_entry(entry_id: str) -> None:
-    entries = [e for e in _load() if e["id"] != entry_id]
+    entries = [e for e in load() if e["id"] != entry_id]
     _save(entries)

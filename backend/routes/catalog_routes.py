@@ -1,6 +1,6 @@
 """Project Catalog API. Listing is open to any authenticated user;
 mutations require the admin role."""
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from auth import get_current_user, require_role, CurrentUser
@@ -23,7 +23,7 @@ class CatalogIdRequest(BaseModel):
 
 @router.post("/api/catalog/list")
 async def catalog_list(user: CurrentUser = Depends(get_current_user)):
-    return catalog.list_entries()
+    return catalog.load()
 
 
 @router.post("/api/catalog/add")
@@ -46,8 +46,10 @@ async def catalog_remove(req: CatalogIdRequest,
 @router.post("/api/open-project")
 async def open_project(req: CatalogIdRequest,
                        user: CurrentUser = Depends(get_current_user)):
-    entry = catalog.get_entry(req.id)
+    entry = catalog.get(req.id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Project not found in catalog")
     wt = provision(sub=user.sub, project_id=entry["id"],
                    repo_path=entry["repo_path"], main_branch=entry["main_branch"])
     audit(sub=user.sub, action="open_project", target=entry["id"])
-    return {"path": entry["id"], "worktree": wt, "name": entry["name"]}
+    return {"path": entry["id"], "worktree": wt, "name": entry.get("name", entry["id"])}

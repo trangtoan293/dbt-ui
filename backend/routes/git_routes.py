@@ -939,7 +939,9 @@ async def git_delete_branch(request: GitCreateBranchRequest, user: CurrentUser =
 @router.post("/api/project-diff")
 async def project_diff(req: ProjectIdRequest,
                        user: CurrentUser = Depends(get_current_user)):
-    entry = catalog.get_entry(req.id)
+    entry = catalog.get(req.id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Project not found in catalog")
     diff = diff_against_main(entry["repo_path"], user.sub, entry["main_branch"])
     return {"diff": diff}
 
@@ -947,7 +949,9 @@ async def project_diff(req: ProjectIdRequest,
 @router.post("/api/merge-to-main")
 async def merge_to_main(req: ProjectIdRequest,
                         user: CurrentUser = Depends(require_role("maintainer"))):
-    entry = catalog.get_entry(req.id)
+    entry = catalog.get(req.id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Project not found in catalog")
     # Lock the canonical repo path to prevent concurrent checkout+merge corruption.
     if not acquire_lock(entry["repo_path"], "merge_to_main"):
         raise HTTPException(status_code=409, detail="Another merge is in progress. Try again shortly.")
