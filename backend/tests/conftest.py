@@ -48,7 +48,28 @@ def make_token(rsa_key):
     return _make
 
 
+import json
 import subprocess
+
+
+@pytest.fixture
+def catalog_with_conn(tmp_path, git_project, monkeypatch):
+    """A Catalog with one project that has dev (duckdb) + prod (dremio) connections."""
+    catalog_path = tmp_path / "catalog.json"
+    entry = {
+        "id": "p1",
+        "name": "Demo",
+        "repo_path": str(git_project),
+        "main_branch": "main",
+        "connections": {
+            "dev": {"engine": "duckdb", "path": "dev.duckdb", "schema": "main"},
+            "prod": {"engine": "dremio", "host": "dremio.local", "port": 9047,
+                     "database": "dl", "schema": "analytics"},
+        },
+    }
+    catalog_path.write_text(json.dumps([entry]))
+    monkeypatch.setenv("CATALOG_PATH", str(catalog_path))
+    return entry
 
 
 def _git(cwd, *args):
