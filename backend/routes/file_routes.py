@@ -7,7 +7,7 @@ from models import (
     ProjectPath, FileNode, FileContent, ListDirectoryRequest,
     CreateFileRequest, RenameFileRequest, DeleteFileRequest
 )
-from routes.git_routes import get_git_file_status, get_git_repos_path
+from routes.git_routes import get_git_file_status
 from utils.merge_utils import simple_merge
 from utils.input_validation import validate_file_path
 from auth import get_current_user, CurrentUser
