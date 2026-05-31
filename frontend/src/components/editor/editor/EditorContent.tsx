@@ -52,6 +52,8 @@ const getLanguage = (filePath: string | null): string => {
 
 const DEFAULT_SYMBOLS: SymbolsType = { models: [], sources: [], macros: [] }
 
+let dbtCompletionDisposable: { dispose: () => void } | null = null
+
 function EditorContent({
   loading,
   isBinaryFile,
@@ -79,7 +81,10 @@ function EditorContent({
   useEffect(() => { symbolsRef.current = symbols }, [symbols])
 
   const handleMount = useCallback((_editor: unknown, monaco: Monaco) => {
-    monaco.languages.registerCompletionItemProvider(['sql', 'jinja-sql', 'sql-jinja'], {
+    if (dbtCompletionDisposable) {
+      dbtCompletionDisposable.dispose()
+    }
+    dbtCompletionDisposable = monaco.languages.registerCompletionItemProvider(['sql', 'jinja-sql', 'sql-jinja'], {
       triggerCharacters: ["'", '"', '('],
       provideCompletionItems(model: unknown, position: unknown) {
         const pos = position as { lineNumber: number; column: number }
