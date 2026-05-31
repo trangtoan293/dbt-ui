@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from auth import get_current_user, require_role, CurrentUser
 from utils import catalog
 from utils.audit import audit
+from utils.worktree import provision
 
 router = APIRouter()
 
@@ -40,3 +41,13 @@ async def catalog_remove(req: CatalogIdRequest,
     catalog.remove_entry(req.id)
     audit(sub=user.sub, action="catalog_remove", target=req.id)
     return {"removed": req.id}
+
+
+@router.post("/api/open-project")
+async def open_project(req: CatalogIdRequest,
+                       user: CurrentUser = Depends(get_current_user)):
+    entry = catalog.get_entry(req.id)
+    wt = provision(sub=user.sub, project_id=entry["id"],
+                   repo_path=entry["repo_path"], main_branch=entry["main_branch"])
+    audit(sub=user.sub, action="open_project", target=entry["id"])
+    return {"path": entry["id"], "worktree": wt, "name": entry["name"]}
