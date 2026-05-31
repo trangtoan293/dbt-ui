@@ -43,6 +43,7 @@ function MainLayout({ projectPath, dbtVersion: initialDbtVersion, onChangeProjec
   const [pendingAction, setPendingAction] = useState<{ type: string; callback: () => void } | null>(null)
   const [showRecreateVenvModal, setShowRecreateVenvModal] = useState(false)
   const [isRecreatingVenv, setIsRecreatingVenv] = useState(false)
+  const [userName, setUserName] = useState<string>('')
   const [dbtModalOpen, setDbtModalOpen] = useState(false)
   const [profileTargets, setProfileTargets] = useState<string[]>([])
   const [selectedTarget, setSelectedTarget] = useState<string>('')
@@ -151,6 +152,13 @@ function MainLayout({ projectPath, dbtVersion: initialDbtVersion, onChangeProjec
       setSelectedTarget('')
     }
   }
+
+  useEffect(() => {
+    apiFetch(apiUrl('/api/me'), { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.name) setUserName(data.name) })
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     if (projectPath) {
@@ -574,6 +582,7 @@ function MainLayout({ projectPath, dbtVersion: initialDbtVersion, onChangeProjec
               onDbtModalOpenChange={setDbtModalOpen}
               selectedTarget={selectedTarget}
               onPackagesFileChanged={checkMetaDVPackage}
+              userName={userName}
             />
           </Pane>
           <Pane>

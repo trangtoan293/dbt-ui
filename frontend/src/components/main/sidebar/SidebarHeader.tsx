@@ -18,6 +18,7 @@ interface SidebarHeaderProps {
   onRenameClick: () => void
   onDeleteClick: () => void
   onRestoreClick: () => void
+  userName?: string
 }
 
 function SidebarHeader({
@@ -29,7 +30,8 @@ function SidebarHeader({
   onCreateFile,
   onRenameClick,
   onDeleteClick,
-  onRestoreClick
+  onRestoreClick,
+  userName = ''
 }: SidebarHeaderProps) {
   return (
     <div className="sidebar-header" title={projectPath}>
@@ -40,6 +42,9 @@ function SidebarHeader({
             <GitBranch size={12} />
             {branchName}
           </span>
+        )}
+        {userName && (
+          <span className="sidebar-user" title={userName}>{userName}</span>
         )}
       </div>
       <div className="sidebar-header-actions">

@@ -26,6 +26,7 @@ class CurrentUser:
     sub: str
     email: str
     roles: List[str] = field(default_factory=list)
+    name: str = ""
 
 
 def _get_signing_key(token: str):
@@ -60,6 +61,7 @@ def verify_token(token: str) -> CurrentUser:
         sub=claims["sub"],
         email=claims.get("email", ""),
         roles=claims.get("realm_access", {}).get("roles", []),
+        name=claims.get("name") or claims.get("preferred_username") or claims.get("email", ""),
     )
 
 

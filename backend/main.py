@@ -10,6 +10,7 @@ from routes.dbt_routes import router as dbt_router
 from routes.venv_routes import router as venv_router
 from routes.env_routes import router as env_router
 from routes.metadv_routes import router as metadv_router
+from routes.catalog_routes import router as catalog_router
 from auth import get_current_user, CurrentUser
 from fastapi import Request
 
@@ -59,10 +60,12 @@ app.include_router(env_router, dependencies=auth_dependency)
 if is_metadv_enabled():
     app.include_router(metadv_router, dependencies=auth_dependency)
 
+app.include_router(catalog_router, dependencies=auth_dependency)
+
 
 @app.get("/api/me")
 async def me(user: CurrentUser = Depends(get_current_user)):
-    return {"sub": user.sub, "email": user.email, "roles": user.roles}
+    return {"sub": user.sub, "email": user.email, "name": user.name, "roles": user.roles}
 
 
 @app.get("/")

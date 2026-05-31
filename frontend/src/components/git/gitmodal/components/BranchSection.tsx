@@ -5,29 +5,22 @@ import {
   Check,
   Plus,
   ChevronDown,
-  Upload,
-  Download,
   Trash2,
 } from 'lucide-react'
-import { BranchState, RemoteState } from '../types'
+import { BranchState } from '../types'
 
 interface BranchSectionProps {
   branchState: BranchState
-  remoteState: RemoteState
   showBranchDropdown: boolean
   showNewBranchInput: boolean
   newBranchName: string
   isAnyOperationInProgress: boolean
-  pushing: boolean
-  pulling: boolean
   onShowBranchDropdown: (show: boolean) => void
   onShowNewBranchInput: (show: boolean) => void
   onNewBranchNameChange: (name: string) => void
   onCheckoutBranch: (branch: string) => void
   onCreateBranch: () => void
   onDeleteBranch: (branch: string) => void
-  onPush: () => void
-  onPull: () => void
   isBranchDisabled: (branch: string) => boolean
   getBranchDisabledReason: (branch: string) => string
   canDeleteBranch: (branch: string) => boolean
@@ -35,27 +28,21 @@ interface BranchSectionProps {
 
 export default function BranchSection({
   branchState,
-  remoteState,
   showBranchDropdown,
   showNewBranchInput,
   newBranchName,
   isAnyOperationInProgress,
-  pushing,
-  pulling,
   onShowBranchDropdown,
   onShowNewBranchInput,
   onNewBranchNameChange,
   onCheckoutBranch,
   onCreateBranch,
   onDeleteBranch,
-  onPush,
-  onPull,
   isBranchDisabled,
   getBranchDisabledReason,
   canDeleteBranch,
 }: BranchSectionProps) {
   const { currentBranch, branches } = branchState
-  const { hasRemote, ahead, behind } = remoteState
 
   return (
     <div className="git-branch-section">
@@ -117,28 +104,6 @@ export default function BranchSection({
               </div>
             </div>
           )}
-        </div>
-
-        {/* Push/Pull buttons */}
-        <div className="git-branch-actions">
-          <button
-            className="git-action-btn"
-            onClick={onPull}
-            disabled={isAnyOperationInProgress || !hasRemote}
-            title={hasRemote ? `Pull from origin${behind > 0 ? ` (${behind} behind)` : ''}` : 'No remote tracking branch'}
-          >
-            <Download size={16} />
-            {behind > 0 && <span className="git-badge">{behind}</span>}
-          </button>
-          <button
-            className="git-action-btn"
-            onClick={onPush}
-            disabled={isAnyOperationInProgress}
-            title={hasRemote ? `Push to origin${ahead > 0 ? ` (${ahead} ahead)` : ''}` : 'Push and create remote branch'}
-          >
-            <Upload size={16} />
-            {ahead > 0 && <span className="git-badge">{ahead}</span>}
-          </button>
         </div>
       </div>
 

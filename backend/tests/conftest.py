@@ -46,3 +46,27 @@ def make_token(rsa_key):
         return jwt.encode(claims, rsa_key, algorithm="RS256",
                           headers={"kid": TEST_KID})
     return _make
+
+
+import subprocess
+
+
+def _git(cwd, *args):
+    subprocess.run(["git", *args], cwd=cwd, check=True,
+                   capture_output=True, text=True)
+
+
+@pytest.fixture
+def git_project(tmp_path):
+    """A canonical local repo with one commit on 'main'. Returns its path."""
+    repo = tmp_path / "canonical" / "demo"
+    repo.mkdir(parents=True)
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "seed@example.com")
+    _git(repo, "config", "user.name", "Seed")
+    (repo / "dbt_project.yml").write_text("name: demo\nprofile: demo\n")
+    (repo / "models").mkdir()
+    (repo / "models" / "stg_x.sql").write_text("select 1 as id\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "initial")
+    return repo

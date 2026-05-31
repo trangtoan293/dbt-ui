@@ -22,6 +22,7 @@ export interface SidebarProps {
   onDbtModalOpenChange?: (open: boolean) => void
   selectedTarget?: string
   onPackagesFileChanged?: () => void
+  userName?: string
 }
 
 export interface TreeNode {

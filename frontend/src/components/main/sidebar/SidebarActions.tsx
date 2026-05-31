@@ -4,6 +4,7 @@ import {
   Play,
   RefreshCw,
   GitBranch,
+  GitMerge,
   PackageOpen,
   FolderSearch
 } from 'lucide-react'
@@ -21,6 +22,7 @@ interface SidebarActionsProps {
   onRunClick: () => void
   onCompileClick: () => void
   onGitClick: () => void
+  onDiffClick: () => void
   onRecreateVenv?: () => void
   onChangeProject?: () => void
 }
@@ -37,6 +39,7 @@ function SidebarActions({
   onRunClick,
   onCompileClick,
   onGitClick,
+  onDiffClick,
   onRecreateVenv,
   onChangeProject
 }: SidebarActionsProps) {
@@ -66,6 +69,13 @@ function SidebarActions({
         onClick={onGitClick}
       >
         <GitBranch size={18} />
+      </button>
+      <button
+        className="action-button"
+        title="Diff vs Main"
+        onClick={onDiffClick}
+      >
+        <GitMerge size={18} />
       </button>
       <button
         className={`action-button ${venvMissing ? 'glow' : ''}`}

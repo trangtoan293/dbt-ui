@@ -18,6 +18,7 @@ from utils.operation_lock import acquire_lock, release_lock, get_lock_status
 from utils.subprocess_utils import run_command
 from auth import get_current_user, CurrentUser
 from utils.user_paths import resolve_under_root
+from utils.audit import audit
 
 router = APIRouter()
 
@@ -345,6 +346,7 @@ async def recreate_venv(project_path: ProjectPath, user: CurrentUser = Depends(g
     try:
         # Run the blocking operation in a thread pool to avoid blocking the event loop
         result = await asyncio.to_thread(_recreate_venv_sync, project_path, user.sub)
+        audit(sub=user.sub, action="venv_recreate", target=str(path))
         return result
     except HTTPException:
         raise

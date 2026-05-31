@@ -1,125 +1,35 @@
 """Git-related API routes."""
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pathlib import Path
 from typing import List
 import subprocess
-import hashlib
 import shutil
 import re
 import os
-import json
-import base64
-from auth import get_current_user, CurrentUser
+from auth import get_current_user, require_role, CurrentUser
 from utils.user_paths import resolve_under_root, user_root
+from utils import catalog
+from utils.worktree import diff_against_main, merge_into_main
+from utils.operation_lock import acquire_lock, release_lock
 
 from models import (
-    ProjectPath, GitRepoUrl, GitTrackedRequest, RestoreFileRequest,
+    ProjectPath, GitTrackedRequest, RestoreFileRequest,
     SetupWorktreeRequest, GitStageRequest, GitCommitRequest,
-    GitCreateBranchRequest, GitStagedFilesRequest, GitPushPullRequest
+    GitCreateBranchRequest, GitStagedFilesRequest
 )
+from pydantic import BaseModel
+
+
+class ProjectIdRequest(BaseModel):
+    id: str
 from utils.input_validation import (
     validate_git_user_name, validate_git_user_email, validate_git_branch_name,
     validate_file_path, validate_commit_message
 )
-from utils.subprocess_utils import run_command, run_git_command, git_askpass_env
+from utils.subprocess_utils import run_command, run_git_command
 from utils.audit import audit
 
 router = APIRouter()
-
-# Git credentials cookie settings
-GIT_CREDS_COOKIE_PREFIX = "dbt_ui_git_creds_"
-GIT_CREDS_COOKIE_MAX_AGE = int(os.environ.get("DBT_UI__BACKEND_GIT_CREDS_COOKIE_MAX_AGE", 60 * 60 * 24 * 30))  # Default: 30 days
-
-
-def get_git_creds_cookie_name(git_root: str) -> str:
-    """Generate a cookie name for git credentials based on git root path."""
-    path_hash = hashlib.md5(git_root.encode()).hexdigest()[:12]
-    return f"{GIT_CREDS_COOKIE_PREFIX}{path_hash}"
-
-
-def get_git_credentials_from_cookie(request: Request, git_root: str) -> dict:
-    """Get git credentials from HttpOnly cookie."""
-    cookie_name = get_git_creds_cookie_name(git_root)
-    cookie_value = request.cookies.get(cookie_name)
-
-    if not cookie_value:
-        return {}
-
-    try:
-        decoded = base64.b64decode(cookie_value).decode('utf-8')
-        return json.loads(decoded)
-    except Exception as e:
-        print(f"[git-routes] Error decoding credentials cookie: {e}")
-        return {}
-
-
-def set_git_credentials_cookie(response: Response, git_root: str, username: str, password: str):
-    """Store git credentials in HttpOnly cookie."""
-    cookie_name = get_git_creds_cookie_name(git_root)
-    creds = {"username": username, "password": password}
-    json_str = json.dumps(creds)
-    encoded = base64.b64encode(json_str.encode('utf-8')).decode('utf-8')
-
-    response.set_cookie(
-        key=cookie_name,
-        value=encoded,
-        max_age=GIT_CREDS_COOKIE_MAX_AGE,
-        httponly=True,
-        samesite="lax",
-        secure=True,
-    )
-
-
-def get_stored_username_from_cookie(request: Request, git_root: str) -> str:
-    """Get only the username from stored credentials (for pre-filling forms)."""
-    creds = get_git_credentials_from_cookie(request, git_root)
-    return creds.get("username", "")
-
-
-def get_main_repo_path(path: Path, git_root: Path) -> str:
-    """Get the main repository path, handling both regular repos and worktrees.
-
-    For worktrees, credentials are stored under the main repo path, not the worktree path.
-    This function returns the main repo path in both cases.
-
-    Args:
-        path: Working directory to run commands in
-        git_root: The git root path (may be worktree or main repo)
-
-    Returns:
-        The main repository path as a string
-    """
-    # Check if this is a worktree by comparing git-dir and git-common-dir
-    git_dir_result = run_git_command(['rev-parse', '--git-dir'], path, git_root, timeout=5)
-    common_dir_result = run_git_command(['rev-parse', '--git-common-dir'], path, git_root, timeout=5)
-
-    if git_dir_result.success and common_dir_result.success:
-        git_dir = git_dir_result.stdout.strip()
-        common_dir = common_dir_result.stdout.strip()
-
-        # If they're different, this is a worktree - get main repo from common dir
-        if git_dir != common_dir:
-            # common_dir points to the .git folder of the main repo
-            # The main repo path is the parent of .git
-            common_path = Path(common_dir).resolve()
-            if common_path.name == '.git':
-                return str(common_path.parent)
-            # Handle bare repos or unusual structures
-            return str(common_path.parent)
-
-    # Not a worktree, return the git root as-is
-    return str(git_root)
-
-
-def get_git_repos_path() -> Path:
-    """Get the path for storing cloned git repositories.
-
-    Uses GIT_REPOS_PATH environment variable if set, otherwise defaults to ~/git-repos.
-    """
-    env_path = os.environ.get("GIT_REPOS_PATH")
-    if env_path:
-        return Path(env_path).expanduser().resolve()
-    return Path.home() / "git-repos"
 
 
 def get_default_branch(git_root: Path, cwd: Path) -> str:
@@ -216,158 +126,6 @@ def get_git_file_status(project_path: Path) -> GitFileStatus:
         print(f"[get_git_file_status] Error: {e}")
 
     return status
-
-
-@router.post("/api/clone-git-repo")
-async def clone_git_repo(git_repo: GitRepoUrl, http_request: Request, response: Response, user: CurrentUser = Depends(get_current_user)):
-    """Clone a Git repository to a local cache directory and return the path."""
-    git_url = git_repo.git_url.strip()
-    username = git_repo.username
-    password = git_repo.password
-
-    # Parse URL to extract repo URL and subdirectory if present
-    # GitHub URLs like: https://github.com/user/repo/tree/branch/path/to/dir
-    # GitLab URLs like: https://gitlab.com/user/repo/-/tree/branch/path/to/dir
-
-    subdirectory = None
-    actual_git_url = git_url
-
-    # Check for GitHub tree/blob URL pattern
-    # Matches both /tree/ (directory) and /blob/ (file path - but treat as directory)
-    github_match = re.match(r'(https://github\.com/[^/]+/[^/]+)(?:/tree|/blob)/[^/]+(?:/(.+))?', git_url)
-    if github_match:
-        actual_git_url = github_match.group(1) + '.git'
-        subdirectory = github_match.group(2).rstrip('/') if github_match.group(2) else None
-    else:
-        # Strip GitHub web UI paths that are not valid for cloning
-        # e.g., /branches, /commits, /pulls, /issues, /settings, /actions, /wiki, /security, /releases, /tags
-        github_ui_match = re.match(
-            r'(https://github\.com/[^/]+/[^/]+)(?:/(?:branches|commits|pulls?|issues?|settings|actions|wiki|security|releases|tags|projects|graphs?|network)(?:/.*)?)?$',
-            git_url
-        )
-        if github_ui_match:
-            actual_git_url = github_ui_match.group(1) + '.git'
-
-    # Check for GitLab tree URL pattern
-    gitlab_match = re.match(r'(https://gitlab\.com/[^/]+/[^/]+)/-/tree/[^/]+/(.+)', git_url)
-    if gitlab_match:
-        actual_git_url = gitlab_match.group(1) + '.git'
-        subdirectory = gitlab_match.group(2).rstrip('/')
-    else:
-        # Strip GitLab web UI paths
-        gitlab_ui_match = re.match(
-            r'(https://gitlab\.com/[^/]+/[^/]+)(?:/-/(?:branches|commits|merge_requests|issues|settings|pipelines|jobs|releases|tags)(?:/.*)?)?$',
-            git_url
-        )
-        if gitlab_ui_match:
-            actual_git_url = gitlab_ui_match.group(1) + '.git'
-
-    # Create a unique directory name based on the Git URL
-    url_hash = hashlib.md5(git_url.encode()).hexdigest()[:12]
-
-    # Create cache directory (configurable via GIT_REPOS_PATH env var)
-    cache_dir = user_root(user.sub)
-    cache_dir.mkdir(parents=True, exist_ok=True)
-
-    # Extract repo name from URL for readability
-    repo_name = actual_git_url.rstrip('/').split('/')[-1].replace('.git', '')
-    clone_path = cache_dir / f"{repo_name}-{url_hash}"
-
-    # Determine the final project path (with subdirectory if specified)
-    final_project_path = clone_path / subdirectory if subdirectory else clone_path
-
-    # If already cloned, pull latest changes
-    if clone_path.exists():
-        try:
-            # Pull latest changes
-            result = run_git_command(['pull'], clone_path, clone_path, timeout=60)
-            if not result.success:
-                # If pull fails, remove and re-clone
-                shutil.rmtree(clone_path)
-            else:
-                # Pull succeeded, return cached path
-                return {
-                    "valid": True,
-                    "path": str(clone_path),  # Return git root, not subdirectory
-                    "subdirectory": subdirectory or "",
-                    "name": final_project_path.name,
-                    "cached": True
-                }
-        except HTTPException:
-            raise
-        except Exception as e:
-            print(f"Error pulling repository: {e}")
-            # If anything goes wrong, remove and re-clone
-            if clone_path.exists():
-                shutil.rmtree(clone_path)
-
-    # Clone the repository
-    try:
-        env = os.environ.copy()
-
-        # Check for stored credentials (use clone_path as key since that's where they're stored)
-        stored_username = get_stored_username_from_cookie(http_request, str(clone_path))
-
-        # If use_stored is set, get full credentials from cookie
-        if git_repo.use_stored:
-            stored_creds = get_git_credentials_from_cookie(http_request, str(clone_path))
-            if stored_creds:
-                username = stored_creds.get("username", "")
-                password = stored_creds.get("password", "")
-
-        # If credentials available and using HTTPS, use GIT_ASKPASS for secure credential passing
-        if username and password and actual_git_url.startswith("https://"):
-            with git_askpass_env(username, password, env) as askpass_env:
-                result = run_command(
-                    ['git', 'clone', actual_git_url, str(clone_path)],
-                    cache_dir,
-                    timeout=120,
-                    env=askpass_env
-                )
-        else:
-            result = run_command(['git', 'clone', actual_git_url, str(clone_path)], cache_dir, timeout=120, env=env)
-
-        if not result.success:
-            error_msg = result.error or ""
-            # Sanitize error message to remove any credentials that might be in URLs
-            sanitized_error = re.sub(r'https://[^:]+:[^@]+@', 'https://***:***@', error_msg)
-            # Check for authentication errors
-            if "could not read Username" in error_msg or "Authentication failed" in error_msg or "Invalid username or password" in error_msg or "terminal prompts disabled" in error_msg:
-                if actual_git_url.startswith("https://"):
-                    raise HTTPException(
-                        status_code=401,
-                        detail={"code": "AUTH_REQUIRED", "stored_username": stored_username}
-                    )
-                raise HTTPException(status_code=401, detail="Authentication failed. Check your SSH keys or credentials.")
-            raise HTTPException(
-                status_code=400,
-                detail=f"Failed to clone repository: {sanitized_error}"
-            )
-
-        # Save credentials to cookie on success (if flag is set and credentials were provided)
-        if git_repo.save_credentials and username and password and actual_git_url.startswith("https://"):
-            set_git_credentials_cookie(response, str(clone_path), username, password)
-
-        return {
-            "valid": True,
-            "path": str(clone_path),  # Return git root, not subdirectory
-            "subdirectory": subdirectory or "",
-            "name": final_project_path.name,
-            "cached": False
-        }
-
-    except subprocess.TimeoutExpired:
-        raise HTTPException(
-            status_code=408,
-            detail="Clone operation timed out. Repository may be too large or network is slow."
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error cloning repository: {str(e)}"
-        )
 
 
 @router.post("/api/git-modified-files")
@@ -680,6 +438,7 @@ async def git_stage_files(request: GitStageRequest, user: CurrentUser = Depends(
             else:
                 print(f"[git-stage] Failed to stage {file_path}: {result.stderr}")
 
+        audit(sub=user.sub, action="git_stage", target=str(path), extra={"files": staged_files})
         return {
             "success": True,
             "staged_files": staged_files,
@@ -733,9 +492,7 @@ async def git_unstage_files(request: GitStageRequest, user: CurrentUser = Depend
             result = run_git_command(['reset', 'HEAD', '--', git_file_path], path, git_root, timeout=10)
             if result.success:
                 unstaged_files.append(file_path)
-            else:
-                print(f"[git-unstage] Failed to unstage {file_path}: {result.stderr}")
-
+        audit(sub=user.sub, action="git_unstage", target=str(path), extra={"files": unstaged_files})
         return {
             "success": True,
             "unstaged_files": unstaged_files,
@@ -796,10 +553,10 @@ async def git_get_staged_files(request: GitStagedFilesRequest, user: CurrentUser
 @router.post("/api/git-commit")
 async def git_commit(request: GitCommitRequest, user: CurrentUser = Depends(get_current_user)):
     """Create a git commit with the staged files."""
-    # Validate all inputs for security
-    user_name = validate_git_user_name(request.user_name)
-    user_email = validate_git_user_email(request.user_email)
     message = validate_commit_message(request.message)
+    # Author identity comes from the Keycloak JWT, not the request body.
+    author_name = user.name or user.email
+    author_email = user.email
 
     path = resolve_under_root(user.sub, request.path)
 
@@ -814,17 +571,18 @@ async def git_commit(request: GitCommitRequest, user: CurrentUser = Depends(get_
 
         git_root = Path(git_root_result.stdout.strip())
 
-        # Set user config for this commit (use -c to set config for this command only)
-        # Using validated values to prevent command injection
+        commit_env = os.environ.copy()
+        commit_env.update({
+            "GIT_AUTHOR_NAME": author_name,
+            "GIT_AUTHOR_EMAIL": author_email,
+            "GIT_COMMITTER_NAME": author_name,
+            "GIT_COMMITTER_EMAIL": author_email,
+        })
         result = run_command(
-            [
-                'git', '-C', str(git_root),
-                '-c', f'user.name={user_name}',
-                '-c', f'user.email={user_email}',
-                'commit', '-m', message
-            ],
+            ['git', '-C', str(git_root), 'commit', '-m', message],
             path,
-            timeout=30
+            timeout=30,
+            env=commit_env
         )
 
         if not result.success:
@@ -1099,227 +857,6 @@ async def git_branch_info(project_path: ProjectPath, user: CurrentUser = Depends
         return {"has_remote": False, "ahead": 0, "behind": 0, "remote_branch": ""}
 
 
-@router.post("/api/git-push")
-async def git_push(request: GitPushPullRequest, http_request: Request, response: Response, user: CurrentUser = Depends(get_current_user)):
-    """Push current branch to origin. Creates upstream if it doesn't exist."""
-    path = resolve_under_root(user.sub, request.path)
-
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Project path does not exist")
-
-    try:
-        # Get git root
-        git_root_result = run_git_command(['rev-parse', '--show-toplevel'], path, timeout=5)
-        if not git_root_result.success:
-            raise HTTPException(status_code=400, detail="Not a git repository")
-
-        git_root = Path(git_root_result.stdout.strip())
-
-        # Get main repo path for credential lookups (handles worktrees)
-        main_repo_path = get_main_repo_path(path, git_root)
-
-        # Get current branch
-        branch_result = run_git_command(['rev-parse', '--abbrev-ref', 'HEAD'], path, git_root, timeout=5)
-        if not branch_result.success:
-            raise HTTPException(status_code=400, detail="Could not determine current branch")
-
-        current_branch = branch_result.stdout.strip()
-
-        # Check remote URL to provide better error messages
-        remote_url_result = run_git_command(['remote', 'get-url', 'origin'], path, git_root, timeout=5)
-        remote_url = remote_url_result.stdout.strip() if remote_url_result.success else ""
-
-        # Build environment with credentials if provided
-        env = os.environ.copy()
-
-        # Get credentials - either from request or stored (if use_stored is true)
-        username = request.username
-        password = request.password
-
-        if request.use_stored:
-            # User explicitly requested to use stored credentials
-            stored_creds = get_git_credentials_from_cookie(http_request, main_repo_path)
-            if stored_creds:
-                username = stored_creds.get("username", "")
-                password = stored_creds.get("password", "")
-
-        # For HTTPS repos, require credentials (either provided or stored via use_stored)
-        # If no credentials, return AUTH_REQUIRED with stored username for pre-fill
-        if remote_url.startswith("https://") and (not username or not password):
-            stored_username = get_stored_username_from_cookie(http_request, main_repo_path)
-            raise HTTPException(
-                status_code=401,
-                detail={"code": "AUTH_REQUIRED", "stored_username": stored_username}
-            )
-
-        # If credentials available and using HTTPS, use GIT_ASKPASS for secure credential passing
-        # This avoids exposing credentials in CLI arguments (visible in ps, logs, /proc)
-        if username and password and remote_url.startswith("https://"):
-            with git_askpass_env(username, password, env) as askpass_env:
-                result = run_git_command(
-                    ['push', '-u', 'origin', current_branch],
-                    path,
-                    git_root,
-                    timeout=120,
-                    env=askpass_env
-                )
-        else:
-            # Push without credentials (SSH or local)
-            result = run_git_command(
-                ['push', '-u', 'origin', current_branch],
-                path,
-                git_root,
-                timeout=120,
-                env=env
-            )
-
-        if not result.success:
-            error_msg = result.error
-            # Sanitize error message to remove any credentials that might be in URLs
-            sanitized_error = re.sub(r'https://[^:]+:[^@]+@', 'https://***:***@', error_msg)
-            # Check for authentication errors
-            if "could not read Username" in error_msg or "Authentication failed" in error_msg or "Invalid username or password" in error_msg:
-                if remote_url.startswith("https://"):
-                    stored_username = get_stored_username_from_cookie(http_request, main_repo_path)
-                    raise HTTPException(
-                        status_code=401,
-                        detail={"code": "AUTH_REQUIRED", "stored_username": stored_username}
-                    )
-                raise HTTPException(status_code=401, detail="Authentication failed. Check your SSH keys or credentials.")
-            raise HTTPException(status_code=500, detail=f"Push failed: {sanitized_error}")
-
-        print(f"[git-push] Pushed branch: {current_branch}")
-
-        # Save credentials to cookie on success (if flag is set and credentials were provided)
-        if request.save_credentials and username and password and remote_url.startswith("https://"):
-            set_git_credentials_cookie(response, main_repo_path, username, password)
-
-        return {
-            "success": True,
-            "branch": current_branch
-        }
-
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=408, detail="Push operation timed out")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error pushing: {str(e)}")
-
-
-@router.post("/api/git-pull")
-async def git_pull(request: GitPushPullRequest, http_request: Request, response: Response, user: CurrentUser = Depends(get_current_user)):
-    """Pull changes from upstream for the current branch."""
-    path = resolve_under_root(user.sub, request.path)
-
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Project path does not exist")
-
-    try:
-        # Get git root
-        git_root_result = run_git_command(['rev-parse', '--show-toplevel'], path, timeout=5)
-        if not git_root_result.success:
-            raise HTTPException(status_code=400, detail="Not a git repository")
-
-        git_root = Path(git_root_result.stdout.strip())
-
-        # Get main repo path for credential lookups (handles worktrees)
-        main_repo_path = get_main_repo_path(path, git_root)
-
-        # Get current branch
-        branch_result = run_git_command(['rev-parse', '--abbrev-ref', 'HEAD'], path, git_root, timeout=5)
-        if not branch_result.success:
-            raise HTTPException(status_code=400, detail="Could not determine current branch")
-
-        current_branch = branch_result.stdout.strip()
-
-        # Check if branch has upstream
-        upstream_result = run_git_command(['rev-parse', '--abbrev-ref', f'{current_branch}@{{upstream}}'], path, git_root, timeout=5)
-        if not upstream_result.success:
-            raise HTTPException(status_code=400, detail="Branch has no upstream tracking branch")
-
-        # Check remote URL
-        remote_url_result = run_git_command(['remote', 'get-url', 'origin'], path, git_root, timeout=5)
-        remote_url = remote_url_result.stdout.strip() if remote_url_result.success else ""
-
-        env = os.environ.copy()
-
-        # Get credentials - either from request or stored (if use_stored is true)
-        username = request.username
-        password = request.password
-
-        if request.use_stored:
-            # User explicitly requested to use stored credentials
-            stored_creds = get_git_credentials_from_cookie(http_request, main_repo_path)
-            if stored_creds:
-                username = stored_creds.get("username", "")
-                password = stored_creds.get("password", "")
-
-        # For HTTPS repos, require credentials (either provided or stored via use_stored)
-        # If no credentials, return AUTH_REQUIRED with stored username for pre-fill
-        if remote_url.startswith("https://") and (not username or not password):
-            stored_username = get_stored_username_from_cookie(http_request, main_repo_path)
-            raise HTTPException(
-                status_code=401,
-                detail={"code": "AUTH_REQUIRED", "stored_username": stored_username}
-            )
-
-        # If credentials available and using HTTPS, use GIT_ASKPASS for secure credential passing
-        # This avoids exposing credentials in CLI arguments (visible in ps, logs, /proc)
-        if username and password and remote_url.startswith("https://"):
-            with git_askpass_env(username, password, env) as askpass_env:
-                result = run_git_command(
-                    ['pull'],
-                    path,
-                    git_root,
-                    timeout=120,
-                    env=askpass_env
-                )
-        else:
-            # Pull without credentials (SSH or local)
-            result = run_git_command(
-                ['pull'],
-                path,
-                git_root,
-                timeout=120,
-                env=env
-            )
-
-        if not result.success:
-            error_msg = result.error
-            # Sanitize error message to remove any credentials that might be in URLs
-            sanitized_error = re.sub(r'https://[^:]+:[^@]+@', 'https://***:***@', error_msg)
-            # Check for authentication errors
-            if "could not read Username" in error_msg or "Authentication failed" in error_msg or "Invalid username or password" in error_msg:
-                if remote_url.startswith("https://"):
-                    stored_username = get_stored_username_from_cookie(http_request, main_repo_path)
-                    raise HTTPException(
-                        status_code=401,
-                        detail={"code": "AUTH_REQUIRED", "stored_username": stored_username}
-                    )
-                raise HTTPException(status_code=401, detail="Authentication failed. Check your SSH keys or credentials.")
-            raise HTTPException(status_code=500, detail=f"Pull failed: {sanitized_error}")
-
-        print(f"[git-pull] Pulled branch: {current_branch}")
-
-        # Save credentials to cookie on success (if flag is set and credentials were provided)
-        if request.save_credentials and username and password and remote_url.startswith("https://"):
-            set_git_credentials_cookie(response, main_repo_path, username, password)
-
-        return {
-            "success": True,
-            "branch": current_branch,
-            "output": result.stdout
-        }
-
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=408, detail="Pull operation timed out")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error pulling: {str(e)}")
-
-
 @router.post("/api/git-delete-branch")
 async def git_delete_branch(request: GitCreateBranchRequest, user: CurrentUser = Depends(get_current_user)):
     """Delete a git branch."""
@@ -1396,3 +933,31 @@ async def git_delete_branch(request: GitCreateBranchRequest, user: CurrentUser =
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error deleting branch: {str(e)}")
+
+
+@router.post("/api/project-diff")
+async def project_diff(req: ProjectIdRequest,
+                       user: CurrentUser = Depends(get_current_user)):
+    entry = catalog.get(req.id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Project not found in catalog")
+    diff = diff_against_main(entry["repo_path"], user.sub, entry["main_branch"])
+    return {"diff": diff}
+
+
+@router.post("/api/merge-to-main")
+async def merge_to_main(req: ProjectIdRequest,
+                        user: CurrentUser = Depends(require_role("maintainer"))):
+    entry = catalog.get(req.id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Project not found in catalog")
+    # Lock the canonical repo path to prevent concurrent checkout+merge corruption.
+    if not acquire_lock(entry["repo_path"], "merge_to_main"):
+        raise HTTPException(status_code=409, detail="Another merge is in progress. Try again shortly.")
+    try:
+        result = merge_into_main(entry["repo_path"], user.sub, entry["main_branch"])
+    finally:
+        release_lock(entry["repo_path"])
+    audit(sub=user.sub, action="merge_to_main", target=req.id,
+          extra={"merged": result["merged"], "conflicts": result["conflicts"]})
+    return result
