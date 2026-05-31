@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import './App.css'
-import ProjectCatalogDialog from './components/main/ProjectCatalogDialog'
+import ProjectDialog from './components/main/ProjectDialog'
 import MainLayout from './components/main/MainLayout'
 
 function App() {
@@ -20,9 +20,9 @@ function App() {
   return (
     <div className="app">
       {!projectPath ? (
-        <ProjectCatalogDialog onOpen={handleOpen} />
+        <ProjectDialog onOpen={handleOpen} />
       ) : (
-        <MainLayout projectPath={projectPath} dbtVersion="" onChangeProject={handleChangeProject} />
+        <MainLayout projectPath={projectPath} projectName={projectName} dbtVersion="" onChangeProject={handleChangeProject} />
       )}
     </div>
   )

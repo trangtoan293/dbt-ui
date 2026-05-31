@@ -16,6 +16,11 @@ def git_repos_path() -> Path:
     return Path(os.environ.get("GIT_REPOS_PATH", str(Path.home() / "git-repos"))).resolve()
 
 
+def user_data_path() -> Path:
+    """Root directory for user-specific data (workspaces, etc.)."""
+    return Path(os.environ.get("USER_DATA_PATH", str(git_repos_path() / "users"))).resolve()
+
+
 def user_root(sub: str) -> Path:
     """The worktree root for a user, derived from their Keycloak sub."""
     if not sub or not _SUB_RE.match(sub):
