@@ -191,3 +191,28 @@ def test_workspace_owner_isolation(client, make_token):
         headers={"Authorization": f"Bearer {t2}"}
     )
     assert r.status_code == 404
+
+
+def test_workspace_create_triggers_venv_provisioning(client, make_token):
+    """Venv provisioning must be scheduled as a background task on workspace create."""
+    t = make_token(sub="user-123", roles=["developer"])
+
+    with patch("routes.venv_routes._recreate_venv_sync") as mock_provision:
+        response = client.post(
+            "/api/workspace/create",
+            json={"name": "my-project", "adapter": "duckdb"},
+            headers={"Authorization": f"Bearer {t}"}
+        )
+
+    assert response.status_code == 200
+    ws_id = response.json()["id"]
+
+    # _recreate_venv_sync must have been called (background tasks run synchronously
+    # inside TestClient by default).
+    mock_provision.assert_called_once()
+    call_args = mock_provision.call_args
+    project_path_arg = call_args.args[0]
+    user_id_arg = call_args.args[1]
+
+    assert project_path_arg.path == f"workspaces/{ws_id}"
+    assert user_id_arg == "user-123"

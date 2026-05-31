@@ -1,7 +1,9 @@
 """Workspace API routes."""
-from fastapi import APIRouter, Depends, HTTPException
+import asyncio
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from auth import get_current_user, CurrentUser
+from models import ProjectPath
 from utils import workspace
 
 router = APIRouter()
@@ -29,9 +31,23 @@ async def workspace_list(user: CurrentUser = Depends(get_current_user)):
 @router.post("/api/workspace/create")
 async def workspace_create(
     req: CreateWorkspaceRequest,
+    background_tasks: BackgroundTasks,
     user: CurrentUser = Depends(get_current_user)
 ):
     ws = workspace.create_workspace(user.sub, req.name, req.adapter)
+
+    # Provision venv in the background so the create response returns immediately.
+    # Reuses the same sync helper that /api/recreate-venv uses; runs in a thread
+    # pool to avoid blocking the event loop.
+    from routes.venv_routes import _recreate_venv_sync
+    relative_path = f"workspaces/{ws['id']}"
+    background_tasks.add_task(
+        asyncio.to_thread,
+        _recreate_venv_sync,
+        ProjectPath(path=relative_path),
+        user.sub,
+    )
+
     return ws
 
 
