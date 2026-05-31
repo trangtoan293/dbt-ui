@@ -102,6 +102,10 @@ function Editor({
     loadCompiledSql
   } = useCompiledSql()
 
+  // Single source of truth for the active tab's dirty state: the tab cache.
+  // Falls back to local content state when no tab store is wired.
+  const activeDirty = tabs && selectedFile ? tabs.isDirty(selectedFile) : hasUnsavedChanges
+
   // File type checks
   const isCsvFile = selectedFile?.endsWith('.csv') || false
   const isJsonFile = selectedFile?.endsWith('.json') || false
@@ -256,7 +260,7 @@ function Editor({
           isSqlModel={isSqlModel}
           isJsonFile={isJsonFile}
           isBinaryFile={isBinaryFile}
-          hasUnsavedChanges={hasUnsavedChanges}
+          hasUnsavedChanges={activeDirty}
           saving={saving}
           showMetadata={showMetadata}
           showSidebar={showSidebar}

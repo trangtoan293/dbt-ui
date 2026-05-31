@@ -391,6 +391,18 @@ function MainLayout({ projectPath, projectName, dbtVersion: initialDbtVersion, o
     }
   }
 
+  // Close a tab, guarding against silent loss of unsaved edits. Closing a dirty
+  // tab activates it (so Save targets the right file) and prompts before closing.
+  const handleCloseTab = (path: string) => {
+    if (!tabs.isDirty(path)) {
+      tabs.closeTab(path)
+      return
+    }
+    tabs.setActive(path)
+    setPendingAction({ type: 'close-tab', callback: () => tabs.closeTab(path) })
+    setShowUnsavedChangesModal(true)
+  }
+
   const pollForCommandStatus = (command: string) => {
     let attempts = 0
     const maxAttempts = 120 // Poll for up to 2 minutes
@@ -631,7 +643,7 @@ function MainLayout({ projectPath, projectName, dbtVersion: initialDbtVersion, o
                           activePath={tabs.activePath}
                           isDirty={tabs.isDirty}
                           onActivate={tabs.setActive}
-                          onClose={tabs.closeTab}
+                          onClose={handleCloseTab}
                         />
                         <Editor
                           selectedFile={tabs.activePath}
@@ -664,7 +676,7 @@ function MainLayout({ projectPath, projectName, dbtVersion: initialDbtVersion, o
                       activePath={tabs.activePath}
                       isDirty={tabs.isDirty}
                       onActivate={tabs.setActive}
-                      onClose={tabs.closeTab}
+                      onClose={handleCloseTab}
                     />
                     <Editor
                       selectedFile={tabs.activePath}
@@ -721,7 +733,7 @@ function MainLayout({ projectPath, projectName, dbtVersion: initialDbtVersion, o
                       activePath={tabs.activePath}
                       isDirty={tabs.isDirty}
                       onActivate={tabs.setActive}
-                      onClose={tabs.closeTab}
+                      onClose={handleCloseTab}
                     />
                     <Editor
                       selectedFile={tabs.activePath}
@@ -753,7 +765,7 @@ function MainLayout({ projectPath, projectName, dbtVersion: initialDbtVersion, o
                   activePath={tabs.activePath}
                   isDirty={tabs.isDirty}
                   onActivate={tabs.setActive}
-                  onClose={tabs.closeTab}
+                  onClose={handleCloseTab}
                 />
                 <Editor
                   selectedFile={tabs.activePath}
