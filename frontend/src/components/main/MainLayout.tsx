@@ -12,6 +12,7 @@ import UnsavedChangesModal from './UnsavedChangesModal'
 import ConfirmModal from './ConfirmModal'
 import { PanelLeftOpen } from 'lucide-react'
 import { apiUrl, apiFetch } from '../../config/api'
+import ConnectionPanel from '../dbt/ConnectionPanel'
 
 interface OperationResult {
   success: boolean
@@ -49,6 +50,7 @@ function MainLayout({ projectPath, dbtVersion: initialDbtVersion, onChangeProjec
   const [selectedTarget, setSelectedTarget] = useState<string>('')
   const [hasMetaDVPackage, setHasMetaDVPackage] = useState(false)
   const [metaDVEnabled, setMetaDVEnabled] = useState(true)
+  const [userRoles, setUserRoles] = useState<string[]>([])
   const saveRef = useRef<(() => Promise<void>) | null>(null)
 
   // Get list of models affected by a selector using dbt ls
@@ -153,10 +155,25 @@ function MainLayout({ projectPath, dbtVersion: initialDbtVersion, onChangeProjec
     }
   }
 
+  const handleTargetChange = async (target: string) => {
+    setSelectedTarget(target)
+    if (!projectPath || !target) return
+    try {
+      await apiFetch(apiUrl('/api/connections/set-target'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: projectPath, target }),
+      })
+    } catch {}
+  }
+
   useEffect(() => {
     apiFetch(apiUrl('/api/me'), { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data?.name) setUserName(data.name) })
+      .then(data => {
+        if (data?.name) setUserName(data.name)
+        if (data?.roles) setUserRoles(data.roles)
+      })
       .catch(() => {})
   }, [])
 
@@ -584,6 +601,9 @@ function MainLayout({ projectPath, dbtVersion: initialDbtVersion, onChangeProjec
               onPackagesFileChanged={checkMetaDVPackage}
               userName={userName}
             />
+            {projectPath && (
+              <ConnectionPanel projectId={projectPath} userRoles={userRoles} />
+            )}
           </Pane>
           <Pane>
             <SplitPane direction="vertical">
@@ -647,7 +667,7 @@ function MainLayout({ projectPath, dbtVersion: initialDbtVersion, onChangeProjec
                   onDbtModalOpenChange={setDbtModalOpen}
                   profileTargets={profileTargets}
                   selectedTarget={selectedTarget}
-                  onTargetChange={setSelectedTarget}
+                  onTargetChange={handleTargetChange}
                   venvMissing={venvMissing}
                   hasMetaDVPackage={hasMetaDVPackage}
                   metaDVEnabled={metaDVEnabled}
@@ -718,7 +738,7 @@ function MainLayout({ projectPath, dbtVersion: initialDbtVersion, onChangeProjec
               onDbtModalOpenChange={setDbtModalOpen}
               profileTargets={profileTargets}
               selectedTarget={selectedTarget}
-              onTargetChange={setSelectedTarget}
+              onTargetChange={handleTargetChange}
               venvMissing={venvMissing}
               hasMetaDVPackage={hasMetaDVPackage}
               metaDVEnabled={metaDVEnabled}

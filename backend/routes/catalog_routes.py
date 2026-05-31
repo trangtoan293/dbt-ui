@@ -7,6 +7,8 @@ from auth import get_current_user, require_role, CurrentUser
 from utils import catalog
 from utils.audit import audit
 from utils.worktree import provision
+from utils.profiles import write_profiles, resolve_profile_name
+from utils.connections import validate_connections
 
 router = APIRouter()
 
@@ -51,5 +53,11 @@ async def open_project(req: CatalogIdRequest,
         raise HTTPException(status_code=404, detail="Project not found in catalog")
     wt = provision(sub=user.sub, project_id=entry["id"],
                    repo_path=entry["repo_path"], main_branch=entry["main_branch"])
+    # Render profiles.yml from the Project's Connection config (issues 11, 12).
+    connections = entry.get("connections")
+    if connections:
+        validate_connections(connections)
+        profile_name = resolve_profile_name(wt)
+        write_profiles(wt, profile_name, connections)
     audit(sub=user.sub, action="open_project", target=entry["id"])
     return {"path": entry["id"], "worktree": wt, "name": entry.get("name", entry["id"])}

@@ -61,3 +61,14 @@ def add_entry(name: str, repo_path: str, main_branch: str = "main") -> dict:
 def remove_entry(entry_id: str) -> None:
     entries = [e for e in load() if e["id"] != entry_id]
     _save(entries)
+
+
+def set_connections(project_id: str, connections: dict) -> None:
+    """Persist a connections block onto an existing Catalog entry."""
+    entries = load()
+    for entry in entries:
+        if entry["id"] == project_id:
+            entry["connections"] = connections
+            _save(entries)
+            return
+    raise KeyError(project_id)

@@ -11,6 +11,7 @@ from routes.venv_routes import router as venv_router
 from routes.env_routes import router as env_router
 from routes.metadv_routes import router as metadv_router
 from routes.catalog_routes import router as catalog_router
+from routes.connection_routes import router as connection_router
 from auth import get_current_user, CurrentUser
 from fastapi import Request
 
@@ -61,6 +62,7 @@ if is_metadv_enabled():
     app.include_router(metadv_router, dependencies=auth_dependency)
 
 app.include_router(catalog_router, dependencies=auth_dependency)
+app.include_router(connection_router, dependencies=auth_dependency)
 
 
 @app.get("/api/me")
