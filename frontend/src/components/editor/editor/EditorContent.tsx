@@ -1,10 +1,18 @@
 // Editor content rendering component
 
+import { useRef, useEffect, useCallback } from 'react'
 import MonacoEditor from '@monaco-editor/react'
+import type { Monaco } from '@monaco-editor/react'
 import { FileText } from 'lucide-react'
 import { ViewMode, ModelPreviewData } from './types'
 import TableEditor from '../TableEditor'
 import DataTable from '../DataTable'
+
+interface SymbolsType {
+  models: string[]
+  sources: { source: string; table: string }[]
+  macros: string[]
+}
 
 interface EditorContentProps {
   loading: boolean
@@ -23,6 +31,7 @@ interface EditorContentProps {
   compiledSql: string
   formattedJson: string
   selectedFile: string | null
+  symbols?: SymbolsType
   onContentChange: (value: string | undefined) => void
   onPreviewConfirm: () => void
   onPreviewCancel: () => void
@@ -41,6 +50,10 @@ const getLanguage = (filePath: string | null): string => {
   return 'plaintext'
 }
 
+const DEFAULT_SYMBOLS: SymbolsType = { models: [], sources: [], macros: [] }
+
+let dbtCompletionDisposable: { dispose: () => void } | null = null
+
 function EditorContent({
   loading,
   isBinaryFile,
@@ -58,11 +71,50 @@ function EditorContent({
   compiledSql,
   formattedJson,
   selectedFile,
+  symbols = DEFAULT_SYMBOLS,
   onContentChange,
   onPreviewConfirm,
   onPreviewCancel,
   onShowPreviewDialog
 }: EditorContentProps) {
+  const symbolsRef = useRef<SymbolsType>(symbols)
+  useEffect(() => { symbolsRef.current = symbols }, [symbols])
+
+  const handleMount = useCallback((_editor: unknown, monaco: Monaco) => {
+    if (dbtCompletionDisposable) {
+      dbtCompletionDisposable.dispose()
+    }
+    dbtCompletionDisposable = monaco.languages.registerCompletionItemProvider(['sql', 'jinja-sql', 'sql-jinja'], {
+      triggerCharacters: ["'", '"', '('],
+      provideCompletionItems(model: unknown, position: unknown) {
+        const pos = position as { lineNumber: number; column: number }
+        const mod = model as { getValueInRange: (range: unknown) => string }
+        const line = mod.getValueInRange({
+          startLineNumber: pos.lineNumber, startColumn: 1,
+          endLineNumber: pos.lineNumber, endColumn: pos.column,
+        })
+        const mk = (label: string, insert: string) => ({
+          label,
+          kind: monaco.languages.CompletionItemKind.Value,
+          insertText: insert,
+          range: undefined as unknown as import('monaco-editor').IRange,
+        })
+        if (/ref\(\s*['"]$/.test(line)) {
+          return { suggestions: symbolsRef.current.models.map(m => mk(m, m)) }
+        }
+        if (/source\(\s*['"]$/.test(line)) {
+          return { suggestions: symbolsRef.current.sources.map(s =>
+            mk(`${s.source}.${s.table}`, `${s.source}', '${s.table}`)) }
+        }
+        if (/config\(\s*$/.test(line)) {
+          const opts = ['materialized', 'schema', 'alias', 'tags', 'unique_key']
+          return { suggestions: opts.map(o => mk(o, `${o}=`)) }
+        }
+        return { suggestions: [] }
+      },
+    })
+  }, [])
+
   if (loading) {
     return <div className="editor-loading">Loading...</div>
   }
@@ -211,6 +263,7 @@ function EditorContent({
       theme="vs-dark"
       value={content}
       onChange={onContentChange}
+      onMount={handleMount}
       options={{
         minimap: { enabled: false },
         fontSize: 14,

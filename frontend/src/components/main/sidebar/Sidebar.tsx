@@ -1,10 +1,9 @@
 // Main Sidebar component - orchestrates sub-components and hooks
 
 import { useState, useEffect } from 'react'
-import { Loader2 } from 'lucide-react'
 import '../Sidebar.css'
 
-import { SidebarProps, TreeNode, DragState } from './types'
+import { SidebarProps, DragState } from './types'
 import { useProjectData } from './hooks/useProjectData'
 import { useDirectoryTree } from './hooks/useDirectoryTree'
 import { useFileOperations } from './hooks/useFileOperations'
@@ -21,7 +20,6 @@ function Sidebar({
   projectPath,
   onFileSelect,
   selectedFile,
-  onToggle,
   onChangeProject,
   onCompile,
   compilationTrigger,

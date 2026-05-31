@@ -1,5 +1,7 @@
 // Editor component types
 
+import type { UseEditorTabs } from '../../main/hooks/useEditorTabs'
+
 export interface ConflictData {
   mergedContent: string
   diskContent: string
@@ -26,6 +28,7 @@ export interface EditorProps {
   dbtVersion?: string
   onUnsavedChangesStateChange?: (hasChanges: boolean) => void
   saveRef?: React.MutableRefObject<(() => Promise<void>) | null>
+  tabs?: UseEditorTabs
 }
 
 export type ViewMode = 'table' | 'text' | 'rendered'

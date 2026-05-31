@@ -19,7 +19,8 @@ interface UseFileContentResult {
 
 export function useFileContent(
   selectedFile: string | null,
-  projectPath: string | null
+  projectPath: string | null,
+  initialContent?: { content: string; originalContent: string }
 ): UseFileContentResult {
   const [content, setContent] = useState('')
   const [originalContent, setOriginalContent] = useState('')
@@ -29,6 +30,15 @@ export function useFileContent(
   const [viewMode, setViewMode] = useState<ViewMode>('table')
 
   useEffect(() => {
+    if (initialContent) {
+      setContent(initialContent.content)
+      setOriginalContent(initialContent.originalContent)
+      setHasUnsavedChanges(initialContent.content !== initialContent.originalContent)
+      setLoading(false)
+      setIsBinaryFile(false)
+      return
+    }
+
     if (!selectedFile || !projectPath) {
       setContent('')
       setOriginalContent('')
@@ -38,7 +48,7 @@ export function useFileContent(
       return
     }
 
-    const isFolder = !selectedFile.includes('.') || selectedFile.endsWith('/')
+    const isFolder = selectedFile.endsWith('/')
     if (isFolder) {
       console.log('[Editor] Folder selected, not loading:', selectedFile)
       setContent('')

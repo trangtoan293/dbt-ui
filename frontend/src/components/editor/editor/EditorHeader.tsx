@@ -1,6 +1,6 @@
 // Editor header component
 
-import { FileText, Table, Code, PanelRightOpen, PanelRightClose, PanelLeftOpen, PanelLeftClose, Save, FileCode2, Database } from 'lucide-react'
+import { FileText, Table, Code, PanelRightOpen, PanelRightClose, PanelLeftOpen, PanelLeftClose, Save, FileCode2, Database, X } from 'lucide-react'
 import { ViewMode } from './types'
 
 interface EditorHeaderProps {
@@ -12,10 +12,14 @@ interface EditorHeaderProps {
   isBinaryFile: boolean
   hasUnsavedChanges: boolean
   saving: boolean
+  saveError?: string | null
   showMetadata: boolean
   showSidebar?: boolean
   onViewModeChange: (mode: ViewMode) => void
+  onFormat?: () => void
+  formatting?: boolean
   onSave: () => void
+  onClearSaveError?: () => void
   onToggleMetadata: () => void
   onToggleSidebar?: () => void
 }
@@ -29,10 +33,14 @@ function EditorHeader({
   isBinaryFile,
   hasUnsavedChanges,
   saving,
+  saveError,
   showMetadata,
   showSidebar,
   onViewModeChange,
+  onFormat,
+  formatting,
   onSave,
+  onClearSaveError,
   onToggleMetadata,
   onToggleSidebar
 }: EditorHeaderProps) {
@@ -111,6 +119,13 @@ function EditorHeader({
         </div>
       )}
 
+      {selectedFile?.endsWith('.sql') && onFormat && (
+        <button className="view-toggle-btn" onClick={onFormat} disabled={formatting}
+                title="Format SQL (sqlfluff)">
+          {formatting ? '…' : 'Format'}
+        </button>
+      )}
+
       <button
         className={`save-btn ${hasUnsavedChanges ? 'has-changes' : ''}`}
         onClick={onSave}
@@ -119,6 +134,17 @@ function EditorHeader({
       >
         <Save size={16} />
       </button>
+
+      {saveError && (
+        <div className="editor-save-error">
+          <span>{saveError}</span>
+          {onClearSaveError && (
+            <button className="save-error-close" onClick={onClearSaveError} title="Dismiss">
+              <X size={14} />
+            </button>
+          )}
+        </div>
+      )}
 
       {onToggleSidebar && (
         <button

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import '../Editor.css'
 
+import { apiFetch, apiUrl } from '../../../config/api'
 import { EditorProps, ViewMode } from './types'
 import { useFileContent } from './hooks/useFileContent'
 import { useFileSave } from './hooks/useFileSave'
@@ -24,11 +25,30 @@ function Editor({
   onFileSaved,
   dbtVersion = '',
   onUnsavedChangesStateChange,
-  saveRef
+  saveRef,
+  tabs
 }: EditorProps) {
   const [formattedJson, setFormattedJson] = useState('')
+  const [formatting, setFormatting] = useState(false)
 
-  // File content hook
+  // Manifest symbols for autocomplete
+  const [symbols, setSymbols] = useState<{ models: string[]; sources: { source: string; table: string }[]; macros: string[] }>({ models: [], sources: [], macros: [] })
+
+  useEffect(() => {
+    if (!projectPath) return
+    apiFetch(apiUrl('/api/manifest-symbols'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: projectPath }),
+    }).then(r => r.json()).then(setSymbols).catch(() => {})
+  }, [projectPath, compilationTrigger])
+
+  // File content hook - use cached content if available
+  const cachedTab = tabs?.getCache(selectedFile ?? '')
+  const tabInitialContent = cachedTab?.loaded
+    ? { content: cachedTab.content, originalContent: cachedTab.originalContent }
+    : undefined
+
   const {
     content,
     setContent,
@@ -40,17 +60,19 @@ function Editor({
     setHasUnsavedChanges,
     viewMode,
     setViewMode
-  } = useFileContent(selectedFile, projectPath)
+  } = useFileContent(selectedFile, projectPath, tabInitialContent)
 
   // File save hook
   const {
     saving,
+    saveError,
     conflictData,
     handleSave,
     handleConflictCancel,
     handleAcceptIncoming,
     handleAcceptMyChanges,
-    handleSaveWithConflicts
+    handleSaveWithConflicts,
+    clearSaveError
   } = useFileSave({
     selectedFile,
     projectPath,
@@ -105,6 +127,25 @@ function Editor({
     }
   }, [hasUnsavedChanges, onUnsavedChangesStateChange])
 
+  // After disk load, write to tab cache (first load only)
+  useEffect(() => {
+    if (!loading && selectedFile && !isBinaryFile && tabs) {
+      const cached = tabs.getCache(selectedFile)
+      if (!cached?.loaded) {
+        tabs.setCache(selectedFile, { content, originalContent, loaded: true })
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, selectedFile])
+
+  // After save, sync originalContent to cache
+  useEffect(() => {
+    if (selectedFile && tabs && tabs.getCache(selectedFile)?.loaded) {
+      tabs.setCache(selectedFile, { originalContent })
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [originalContent, selectedFile])
+
   // Expose save function to parent via ref
   useEffect(() => {
     if (saveRef) {
@@ -115,7 +156,7 @@ function Editor({
         saveRef.current = null
       }
     }
-  }, [saveRef, selectedFile, projectPath, content, saving])
+  }, [saveRef, selectedFile, projectPath, content, originalContent, saving])
 
   // Reset compiled SQL, formatted JSON when file changes; restore preview from cache
   useEffect(() => {
@@ -141,12 +182,41 @@ function Editor({
     }
   }, [compilationTrigger])
 
+  const handleFormat = async () => {
+    if (!selectedFile || formatting) return
+    setFormatting(true)
+    try {
+      const res = await apiFetch(apiUrl('/api/format-sql'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: projectPath, file_path: selectedFile, content }),
+      })
+      const data = await res.json()
+      if (data.ok) {
+        setContent(data.formatted)
+        if (data.formatted !== originalContent) {
+          setHasUnsavedChanges(true)
+        }
+        if (tabs && selectedFile) {
+          tabs.setCache(selectedFile, { content: data.formatted })
+        }
+      } else {
+        console.error('Format failed:', data.error)
+      }
+    } finally {
+      setFormatting(false)
+    }
+  }
+
   const handleContentChange = (value: string | undefined) => {
     if (viewMode !== 'text') return
     const newContent = value || ''
     setContent(newContent)
     const isModified = newContent !== originalContent
     setHasUnsavedChanges(isModified)
+    if (tabs && selectedFile) {
+      tabs.setCache(selectedFile, { content: newContent })
+    }
   }
 
   const handleViewModeChange = (mode: ViewMode) => {
@@ -190,10 +260,14 @@ function Editor({
           isBinaryFile={isBinaryFile}
           hasUnsavedChanges={hasUnsavedChanges}
           saving={saving}
+          saveError={saveError}
           showMetadata={showMetadata}
           showSidebar={showSidebar}
           onViewModeChange={handleViewModeChange}
+          onFormat={handleFormat}
+          formatting={formatting}
           onSave={handleSave}
+          onClearSaveError={clearSaveError}
           onToggleMetadata={onToggleMetadata}
           onToggleSidebar={onToggleSidebar}
         />
@@ -215,6 +289,7 @@ function Editor({
             compiledSql={compiledSql}
             formattedJson={formattedJson}
             selectedFile={selectedFile}
+            symbols={symbols}
             onContentChange={handleContentChange}
             onPreviewConfirm={handlePreviewConfirm}
             onPreviewCancel={handlePreviewCancel}

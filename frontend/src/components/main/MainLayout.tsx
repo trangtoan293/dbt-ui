@@ -14,6 +14,8 @@ import { PanelLeftOpen } from 'lucide-react'
 import { apiUrl, apiFetch } from '../../config/api'
 import ConnectionPanel from '../dbt/ConnectionPanel'
 import WorkspaceSettingsModal from './WorkspaceSettingsModal'
+import { useEditorTabs } from './hooks/useEditorTabs'
+import TabBar from '../editor/editor/TabBar'
 
 interface OperationResult {
   success: boolean
@@ -30,7 +32,7 @@ interface MainLayoutProps {
 }
 
 function MainLayout({ projectPath, projectName, dbtVersion: initialDbtVersion, onChangeProject }: MainLayoutProps) {
-  const [selectedFile, setSelectedFile] = useState<string | null>(null)
+  const tabs = useEditorTabs()
   const [showSidebar, setShowSidebar] = useState(true)
   const [showMetadata, setShowMetadata] = useState(true)
   const [compilationTrigger, setCompilationTrigger] = useState(0)
@@ -41,7 +43,7 @@ function MainLayout({ projectPath, projectName, dbtVersion: initialDbtVersion, o
   const [venvMissing, setVenvMissing] = useState(false)
   const [dbtVersion, setDbtVersion] = useState(initialDbtVersion)
   const [operationResult, setOperationResult] = useState<OperationResult | null>(null)
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
+  const hasUnsavedChanges = tabs.openPaths.some(p => tabs.isDirty(p))
   const [showUnsavedChangesModal, setShowUnsavedChangesModal] = useState(false)
   const [pendingAction, setPendingAction] = useState<{ type: string; callback: () => void } | null>(null)
   const [showRecreateVenvModal, setShowRecreateVenvModal] = useState(false)
@@ -167,7 +169,9 @@ function MainLayout({ projectPath, projectName, dbtVersion: initialDbtVersion, o
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: projectPath, target }),
       })
-    } catch {}
+    } catch (e) {
+      console.error('Failed to set connection target:', e)
+    }
   }
 
   useEffect(() => {
@@ -389,6 +393,18 @@ function MainLayout({ projectPath, projectName, dbtVersion: initialDbtVersion, o
     }
   }
 
+  // Close a tab, guarding against silent loss of unsaved edits. Closing a dirty
+  // tab activates it (so Save targets the right file) and prompts before closing.
+  const handleCloseTab = (path: string) => {
+    if (!tabs.isDirty(path)) {
+      tabs.closeTab(path)
+      return
+    }
+    tabs.setActive(path)
+    setPendingAction({ type: 'close-tab', callback: () => tabs.closeTab(path) })
+    setShowUnsavedChangesModal(true)
+  }
+
   const pollForCommandStatus = (command: string) => {
     let attempts = 0
     const maxAttempts = 120 // Poll for up to 2 minutes
@@ -582,8 +598,8 @@ function MainLayout({ projectPath, projectName, dbtVersion: initialDbtVersion, o
           <Pane minSize="200px" maxSize="600px" defaultSize="300px">
             <Sidebar
               projectPath={projectPath}
-              onFileSelect={setSelectedFile}
-              selectedFile={selectedFile}
+              onFileSelect={tabs.openTab}
+              selectedFile={tabs.activePath}
               onToggle={() => setShowSidebar(false)}
               onChangeProject={onChangeProject}
               onCompile={handleDbtCompileModel}
@@ -623,50 +639,68 @@ function MainLayout({ projectPath, projectName, dbtVersion: initialDbtVersion, o
                 {showMetadata ? (
                   <SplitPane direction="horizontal" primary="second">
                     <Pane>
-                      <Editor
-                        selectedFile={selectedFile}
-                        projectPath={projectPath}
-                        onToggleMetadata={() => setShowMetadata(!showMetadata)}
-                        showMetadata={showMetadata}
-                        onToggleSidebar={() => setShowSidebar(!showSidebar)}
-                        showSidebar={showSidebar}
-                        compilationTrigger={compilationTrigger}
-                        onFileModified={handleFileModified}
-                        onFileSaved={handleFileSaved}
-                        dbtVersion={dbtVersion}
-                        onUnsavedChangesStateChange={setHasUnsavedChanges}
-                        saveRef={saveRef}
-                      />
+                      <>
+                        <TabBar
+                          openPaths={tabs.openPaths}
+                          activePath={tabs.activePath}
+                          isDirty={tabs.isDirty}
+                          onActivate={tabs.setActive}
+                          onClose={handleCloseTab}
+                        />
+                        <Editor
+                          selectedFile={tabs.activePath}
+                          projectPath={projectPath}
+                          onToggleMetadata={() => setShowMetadata(!showMetadata)}
+                          showMetadata={showMetadata}
+                          onToggleSidebar={() => setShowSidebar(!showSidebar)}
+                          showSidebar={showSidebar}
+                          compilationTrigger={compilationTrigger}
+                          onFileModified={handleFileModified}
+                          onFileSaved={handleFileSaved}
+                          dbtVersion={dbtVersion}
+                          saveRef={saveRef}
+                          tabs={tabs}
+                        />
+                      </>
                     </Pane>
                     <Pane minSize="150px" maxSize="400px" defaultSize="270px">
                       <MetadataSidebar
-                        selectedFile={selectedFile}
+                        selectedFile={tabs.activePath}
                         projectPath={projectPath}
                         compilationTrigger={compilationTrigger}
                       />
                     </Pane>
                   </SplitPane>
                 ) : (
-                  <Editor
-                    selectedFile={selectedFile}
-                    projectPath={projectPath}
-                    onToggleMetadata={() => setShowMetadata(!showMetadata)}
-                    showMetadata={showMetadata}
-                    onToggleSidebar={() => setShowSidebar(!showSidebar)}
-                    showSidebar={showSidebar}
-                    compilationTrigger={compilationTrigger}
-                    onFileModified={handleFileModified}
-                    onFileSaved={handleFileSaved}
-                    onUnsavedChangesStateChange={setHasUnsavedChanges}
-                    saveRef={saveRef}
-                  />
+                  <>
+                    <TabBar
+                      openPaths={tabs.openPaths}
+                      activePath={tabs.activePath}
+                      isDirty={tabs.isDirty}
+                      onActivate={tabs.setActive}
+                      onClose={handleCloseTab}
+                    />
+                    <Editor
+                      selectedFile={tabs.activePath}
+                      projectPath={projectPath}
+                      onToggleMetadata={() => setShowMetadata(!showMetadata)}
+                      showMetadata={showMetadata}
+                      onToggleSidebar={() => setShowSidebar(!showSidebar)}
+                      showSidebar={showSidebar}
+                      compilationTrigger={compilationTrigger}
+                      onFileModified={handleFileModified}
+                      onFileSaved={handleFileSaved}
+                      saveRef={saveRef}
+                      tabs={tabs}
+                    />
+                  </>
                 )}
               </Pane>
               <Pane minSize="200px">
                 <GraphView
                   projectPath={projectPath}
-                  selectedFile={selectedFile}
-                  onNodeClick={setSelectedFile}
+                  selectedFile={tabs.activePath}
+                  onNodeClick={tabs.openTab}
                   compilationTrigger={compilationTrigger}
                   isDbtOperationRunning={isOperationRunning}
                   onDbtRun={handleDbtRun}
@@ -695,49 +729,67 @@ function MainLayout({ projectPath, projectName, dbtVersion: initialDbtVersion, o
             {showMetadata ? (
               <SplitPane direction="horizontal" primary="second">
                 <Pane>
-                  <Editor
-                    selectedFile={selectedFile}
-                    projectPath={projectPath}
-                    onToggleMetadata={() => setShowMetadata(!showMetadata)}
-                    showMetadata={showMetadata}
-                    onToggleSidebar={() => setShowSidebar(!showSidebar)}
-                    showSidebar={showSidebar}
-                    compilationTrigger={compilationTrigger}
-                    onFileModified={handleFileModified}
-                    onFileSaved={handleFileSaved}
-                    onUnsavedChangesStateChange={setHasUnsavedChanges}
-                    saveRef={saveRef}
-                  />
+                  <>
+                    <TabBar
+                      openPaths={tabs.openPaths}
+                      activePath={tabs.activePath}
+                      isDirty={tabs.isDirty}
+                      onActivate={tabs.setActive}
+                      onClose={handleCloseTab}
+                    />
+                    <Editor
+                      selectedFile={tabs.activePath}
+                      projectPath={projectPath}
+                      onToggleMetadata={() => setShowMetadata(!showMetadata)}
+                      showMetadata={showMetadata}
+                      onToggleSidebar={() => setShowSidebar(!showSidebar)}
+                      showSidebar={showSidebar}
+                      compilationTrigger={compilationTrigger}
+                      onFileModified={handleFileModified}
+                      onFileSaved={handleFileSaved}
+                      saveRef={saveRef}
+                      tabs={tabs}
+                    />
+                  </>
                 </Pane>
                 <Pane minSize="150px" maxSize="400px" defaultSize="270px">
                   <MetadataSidebar
-                    selectedFile={selectedFile}
+                    selectedFile={tabs.activePath}
                     projectPath={projectPath}
                     compilationTrigger={compilationTrigger}
                   />
                 </Pane>
               </SplitPane>
             ) : (
-              <Editor
-                selectedFile={selectedFile}
-                projectPath={projectPath}
-                onToggleMetadata={() => setShowMetadata(!showMetadata)}
-                showMetadata={showMetadata}
-                onToggleSidebar={() => setShowSidebar(!showSidebar)}
-                showSidebar={showSidebar}
-                compilationTrigger={compilationTrigger}
-                onFileModified={handleFileModified}
-                onFileSaved={handleFileSaved}
-                onUnsavedChangesStateChange={setHasUnsavedChanges}
-                saveRef={saveRef}
-              />
+              <>
+                <TabBar
+                  openPaths={tabs.openPaths}
+                  activePath={tabs.activePath}
+                  isDirty={tabs.isDirty}
+                  onActivate={tabs.setActive}
+                  onClose={handleCloseTab}
+                />
+                <Editor
+                  selectedFile={tabs.activePath}
+                  projectPath={projectPath}
+                  onToggleMetadata={() => setShowMetadata(!showMetadata)}
+                  showMetadata={showMetadata}
+                  onToggleSidebar={() => setShowSidebar(!showSidebar)}
+                  showSidebar={showSidebar}
+                  compilationTrigger={compilationTrigger}
+                  onFileModified={handleFileModified}
+                  onFileSaved={handleFileSaved}
+                  saveRef={saveRef}
+                  tabs={tabs}
+                />
+              </>
             )}
           </Pane>
           <Pane minSize="200px">
             <GraphView
               projectPath={projectPath}
-              selectedFile={selectedFile}
-              onNodeClick={setSelectedFile}
+              selectedFile={tabs.activePath}
+              onNodeClick={tabs.openTab}
               compilationTrigger={compilationTrigger}
               isDbtOperationRunning={isOperationRunning}
               onDbtRun={handleDbtRun}

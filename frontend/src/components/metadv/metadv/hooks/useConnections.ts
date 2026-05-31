@@ -1,6 +1,6 @@
 // Hook for managing connections between source columns and targets
 
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback } from 'react'
 import { Connection, PendingConnection, SourceColumn, Target, MetaDVData, CONNECTION_TYPE_COLORS } from '../types'
 import { getColumnKey, getSourceFromColumnKey } from '../utils'
 

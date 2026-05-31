@@ -4,7 +4,7 @@ import { useState, useRef } from 'react'
 import { flushSync } from 'react-dom'
 import { apiUrl, apiFetch } from '../../../../config/api'
 import { TreeNode } from '../types'
-import { convertApiNodeToTreeNode, updateNodeInTree, findNodeInTree } from '../utils'
+import { convertApiNodeToTreeNode, updateNodeInTree } from '../utils'
 
 interface UseDirectoryTreeResult {
   tree: TreeNode[]

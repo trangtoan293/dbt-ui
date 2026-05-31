@@ -5,7 +5,7 @@ import { X, Database, Save, CheckCircle, AlertTriangle, AlertCircle, FileCode, C
 import { apiUrl, apiFetch } from '../../../config/api'
 import '../MetaDVModal.css'
 
-import { MetaDVModalProps, SourceGroup, SourceColumn, Target, Connection, DeleteConfirmDialogState, CONNECTION_TYPE_COLORS, HoverHighlight, TargetAttribute, MetaDVData } from './types'
+import { MetaDVModalProps, SourceGroup, SourceColumn, Target, DeleteConfirmDialogState, CONNECTION_TYPE_COLORS, HoverHighlight, MetaDVData } from './types'
 import { getColumnKey, getColumnNameFromColumnKey } from './utils'
 import { useMetaDVData } from './hooks/useMetaDVData'
 import { useConnections } from './hooks/useConnections'
