@@ -20,10 +20,59 @@ from auth import get_current_user, CurrentUser
 from utils.user_paths import resolve_under_root
 from utils.secret_scrub import scrub
 from utils.rate_limit import RateLimiter
+from utils import catalog
+from utils.connections import engine_for_target, is_production_engine
+from utils.dremio_token import exchange_for_dremio, TokenExchangeError
+from utils.profiles import resolve_profile_name, read_default_target
+from utils.audit import audit as _audit
 
 _dbt_rate_limiter = RateLimiter(max_calls=10, window_seconds=60)
 
 router = APIRouter()
+
+
+def _engine_gate(user, request, project_id: str, worktree, explicit_target: str, env_vars: dict) -> dict:
+    """If the effective target's engine is the Production Engine (Dremio): require
+    the maintainer role and inject a freshly-exchanged Dremio token into env_vars.
+    Dev Engines pass through untouched. Returns the (possibly augmented) env_vars.
+    Raises HTTPException(403) on a non-maintainer; (502) on exchange failure."""
+    entry = catalog.get(project_id)
+    connections = entry.get("connections", {}) if entry else {}
+    if not connections:
+        return env_vars or {}
+
+    # Effective target: explicit arg wins; else the profile's default target.
+    target = explicit_target
+    if not target:
+        try:
+            target = read_default_target(worktree, resolve_profile_name(worktree))
+        except Exception:
+            target = None
+    if not target:
+        return env_vars or {}
+
+    try:
+        engine = engine_for_target(connections, target)
+    except HTTPException:
+        return env_vars or {}
+
+    if not is_production_engine(engine):
+        return env_vars or {}
+
+    if "maintainer" not in user.roles:
+        _audit(sub=user.sub, action="prod_run_denied", target=project_id,
+               extra={"target_env": target, "engine": engine})
+        raise HTTPException(status_code=403,
+                            detail="Production Engine requires the maintainer role")
+
+    # Exchange the still-valid Keycloak token NOW (the job outlives it; ADR §6).
+    header = request.headers.get("Authorization", "")
+    kc_token = header[len("Bearer "):] if header.startswith("Bearer ") else ""
+    try:
+        dremio_token = exchange_for_dremio(kc_token)
+    except TokenExchangeError as e:
+        raise HTTPException(status_code=502, detail=f"Dremio token exchange failed: {e}")
+    return {**(env_vars or {}), "DREMIO_TOKEN": dremio_token}
 
 # Keyed by (user_sub, resolved_path) so one user can never read another's output.
 dbt_command_status: Dict[tuple, Dict[str, any]] = {}
@@ -199,6 +248,9 @@ async def dbt_command(action: DbtCommandRequest, background_tasks: BackgroundTas
     # Get env vars from HttpOnly cookie (automatically sent with request)
     env_vars = get_env_vars_from_cookie(request, str(path))
 
+    # Engine gate: require maintainer for Production Engine, inject exchanged token.
+    env_vars = _engine_gate(user, request, action.path, path, target, env_vars)
+
     # Always run in background
     background_tasks.add_task(run_dbt_command_task, user.sub, path, command, selector, target, action.full_refresh, env_vars)
 
@@ -320,6 +372,11 @@ async def dbt_show_model(show_request: DbtShowRequest, http_request: Request, us
     # Validate limit (already an int from Pydantic, but ensure reasonable bounds)
     limit = min(max(1, show_request.limit), 1000)
 
+    # Engine gate: dbt show has no --target, so it uses the profile default.
+    # Must run before entering the try/except that swallows generic exceptions.
+    env_vars = get_env_vars_from_cookie(http_request, str(path))
+    env_vars = _engine_gate(user, http_request, show_request.path, path, "", env_vars)
+
     try:
         # Get dbt executable for this project (venv or global)
         try:
@@ -374,8 +431,6 @@ async def dbt_show_model(show_request: DbtShowRequest, http_request: Request, us
         ]
 
 
-        # Get environment with env vars from HttpOnly cookie
-        env_vars = get_env_vars_from_cookie(http_request, str(path))
         env = get_dbt_env(path, env_vars)
 
         result = run_command(cmd, path, timeout=120, env=env)
@@ -471,6 +526,8 @@ async def dbt_show_model(show_request: DbtShowRequest, http_request: Request, us
             "columns": [],
             "rows": []
         }
+    except HTTPException:
+        raise
     except Exception as e:
         return {
             "success": False,
