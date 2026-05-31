@@ -25,7 +25,8 @@ function Editor({
   onFileSaved,
   dbtVersion = '',
   onUnsavedChangesStateChange,
-  saveRef
+  saveRef,
+  tabs
 }: EditorProps) {
   const [formattedJson, setFormattedJson] = useState('')
   const [formatting, setFormatting] = useState(false)
@@ -42,7 +43,12 @@ function Editor({
     }).then(r => r.json()).then(setSymbols).catch(() => {})
   }, [projectPath, compilationTrigger])
 
-  // File content hook
+  // File content hook - use cached content if available
+  const cachedTab = tabs?.getCache(selectedFile ?? '')
+  const tabInitialContent = cachedTab?.loaded
+    ? { content: cachedTab.content, originalContent: cachedTab.originalContent }
+    : undefined
+
   const {
     content,
     setContent,
@@ -54,7 +60,7 @@ function Editor({
     setHasUnsavedChanges,
     viewMode,
     setViewMode
-  } = useFileContent(selectedFile, projectPath)
+  } = useFileContent(selectedFile, projectPath, tabInitialContent)
 
   // File save hook
   const {
@@ -118,6 +124,25 @@ function Editor({
       onUnsavedChangesStateChange(hasUnsavedChanges)
     }
   }, [hasUnsavedChanges, onUnsavedChangesStateChange])
+
+  // After disk load, write to tab cache (first load only)
+  useEffect(() => {
+    if (!loading && selectedFile && !isBinaryFile && tabs) {
+      const cached = tabs.getCache(selectedFile)
+      if (!cached?.loaded) {
+        tabs.setCache(selectedFile, { content, originalContent, loaded: true })
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, selectedFile])
+
+  // After save, sync originalContent to cache
+  useEffect(() => {
+    if (selectedFile && tabs && tabs.getCache(selectedFile)?.loaded) {
+      tabs.setCache(selectedFile, { originalContent })
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [originalContent, selectedFile])
 
   // Expose save function to parent via ref
   useEffect(() => {
@@ -184,6 +209,9 @@ function Editor({
     setContent(newContent)
     const isModified = newContent !== originalContent
     setHasUnsavedChanges(isModified)
+    if (tabs && selectedFile) {
+      tabs.setCache(selectedFile, { content: newContent })
+    }
   }
 
   const handleViewModeChange = (mode: ViewMode) => {
