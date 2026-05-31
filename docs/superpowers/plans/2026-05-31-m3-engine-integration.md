@@ -452,21 +452,26 @@ git commit -m "feat(engine): render profiles.yml from secret-free connections"
 
 ---
 
-## Task 4: Resolve a Project's profile name (shared helper)
+## Task 4: Resolve profile name + effective target (shared helpers)
 
 **Files:**
 - Modify: `backend/utils/profiles.py`
 - Test: `backend/tests/test_profile_name.py`
 
-> The profile name comes from `dbt_project.yml` (`profile:` key, fallback `name:`),
-> mirroring the existing `/api/get-profile-targets` logic. Extract it so both
-> open-project and the connection endpoints use one resolver.
+> Two shared lookups used downstream:
+> - `resolve_profile_name` — the profile name from `dbt_project.yml` (`profile:` key,
+>   fallback `name:`), mirroring the existing `/api/get-profile-targets` logic.
+> - `read_default_target` — the active target written into the worktree's
+>   `profiles.yml`. **The Production-Engine gate (Tasks 8, 8b) needs this:** a dbt run
+>   with no explicit `--target`, or a `dbt show` preview, runs against this default.
+>   The gate must resolve the *effective* target (explicit OR this default) before
+>   deciding the engine — otherwise an empty target silently hits the profile default.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing tests**
 
 Create `backend/tests/test_profile_name.py`:
 ```python
-from utils.profiles import resolve_profile_name
+from utils.profiles import resolve_profile_name, read_default_target, write_profiles
 
 
 def test_reads_profile_key(tmp_path):
@@ -477,12 +482,23 @@ def test_reads_profile_key(tmp_path):
 def test_falls_back_to_name(tmp_path):
     (tmp_path / "dbt_project.yml").write_text("name: demo\n")
     assert resolve_profile_name(tmp_path) == "demo"
+
+
+def test_read_default_target(tmp_path):
+    conn = {"dev": {"engine": "duckdb", "path": "d.duckdb"},
+            "prod": {"engine": "dremio", "host": "h"}}
+    write_profiles(tmp_path, "demo", conn, default_target="prod")
+    assert read_default_target(tmp_path, "demo") == "prod"
+
+
+def test_read_default_target_missing_file(tmp_path):
+    assert read_default_target(tmp_path, "demo") is None
 ```
 
-- [ ] **Step 2: Run test, verify it fails**
+- [ ] **Step 2: Run tests, verify they fail**
 
 Run: `cd backend && python -m pytest tests/test_profile_name.py -v`
-Expected: FAIL — `cannot import name 'resolve_profile_name'`.
+Expected: FAIL — `cannot import name 'resolve_profile_name'` / `read_default_target`.
 
 - [ ] **Step 3: Add the resolver to `profiles.py`**
 
@@ -498,12 +514,22 @@ def resolve_profile_name(worktree: Path) -> str:
     if not name:
         raise ValueError("no profile name in dbt_project.yml")
     return name
+
+
+def read_default_target(worktree: Path, profile_name: str) -> str | None:
+    """The active target in the worktree's profiles.yml (None if no file/target).
+    Used by the engine gate to resolve the effective target when none is explicit."""
+    pf = Path(worktree) / "profiles.yml"
+    if not pf.exists():
+        return None
+    data = yaml.safe_load(pf.read_text()) or {}
+    return (data.get(profile_name) or {}).get("target")
 ```
 
-- [ ] **Step 4: Run test, verify it passes**
+- [ ] **Step 4: Run tests, verify they pass**
 
 Run: `cd backend && python -m pytest tests/test_profile_name.py -v`
-Expected: 2 passed.
+Expected: 4 passed.
 
 - [ ] **Step 5: Commit**
 
@@ -720,16 +746,23 @@ async def set_target(req: SetTargetRequest, user: CurrentUser = Depends(get_curr
     target = validate_dbt_target(req.target)
     entry = catalog.get(req.id)
     if entry is None:
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="project not in catalog")
     connections = entry.get("connections", {})
-    engine_for_target(connections, target)  # 404 if target unknown
+    engine = engine_for_target(connections, target)  # 404 if target unknown
+    # Gap C: a non-maintainer must not make the Production Engine their default
+    # target (it would become the implicit engine for untargeted runs/preview).
+    if is_production_engine(engine) and "maintainer" not in user.roles:
+        raise HTTPException(status_code=403,
+                            detail="Only maintainers may set a Production Engine target as default")
     worktree = resolve_under_root(user.sub, req.id)
     profile_name = resolve_profile_name(worktree)
     write_profiles(worktree, profile_name, connections, default_target=target)
     audit(sub=user.sub, action="set_target", target=req.id, extra={"target": target})
     return {"ok": True, "worktree": str(worktree), "target": target}
 ```
+
+> Add `is_production_engine` to the `utils.connections` import at the top of this
+> file, and `HTTPException` to the fastapi import (both are used above).
 
 - [ ] **Step 4: Add `set_connections` to the Catalog module**
 
@@ -983,44 +1016,70 @@ def test_dev_target_no_token(catalog_with_conn, make_token, monkeypatch, tmp_pat
 Run: `cd backend && python -m pytest tests/test_prod_engine_gate.py -v`
 Expected: FAIL — developer not blocked / token not injected.
 
-- [ ] **Step 3: Add the gate + injection in the dbt-command handler**
+- [ ] **Step 3: Add a shared engine gate, then call it in the dbt-command handler**
 
 In `backend/routes/dbt_routes.py`, add imports near the top:
 ```python
 from utils import catalog
 from utils.connections import engine_for_target, is_production_engine
 from utils.dremio_token import exchange_for_dremio, TokenExchangeError
+from utils.profiles import resolve_profile_name, read_default_target
+from utils.audit import audit as _audit
 ```
 
-In the `/api/dbt-command` handler, after `target = validate_dbt_target(action.target)`
-and before `background_tasks.add_task(...)`, insert:
+Add this module-level helper (used by BOTH `/api/dbt-command` here and `dbt show`
+in Task 8b — DRY). It resolves the **effective** target (explicit OR the profile
+default) so an empty `--target` cannot silently hit a production default (Gap A):
 ```python
-    # Engine trust gate (issue 13 / ADR 0001 §5). project_id == the sub-path.
-    project_id = action.path
+def _engine_gate(user, request, project_id: str, worktree, explicit_target: str, env_vars: dict) -> dict:
+    """If the effective target's engine is the Production Engine (Dremio): require
+    the maintainer role and inject a freshly-exchanged Dremio token into env_vars.
+    Dev Engines pass through untouched. Returns the (possibly augmented) env_vars.
+    Raises HTTPException(403) on a non-maintainer; (502) on exchange failure."""
     entry = catalog.get(project_id)
     connections = entry.get("connections", {}) if entry else {}
-    if target and connections:
-        engine = engine_for_target(connections, target)
-        if is_production_engine(engine):
-            if "maintainer" not in user.roles:
-                _audit(sub=user.sub, action="prod_run_denied", target=str(path),
-                       extra={"target_env": target, "engine": engine})
-                raise HTTPException(status_code=403,
-                                    detail="Production Engine requires the maintainer role")
-            # Exchange the still-valid Keycloak token NOW (job outlives it).
-            header = request.headers.get("Authorization", "")
-            kc_token = header[len("Bearer "):] if header.startswith("Bearer ") else ""
-            try:
-                dremio_token = exchange_for_dremio(kc_token)
-            except TokenExchangeError as e:
-                raise HTTPException(status_code=502,
-                                    detail=f"Dremio token exchange failed: {e}")
-            env_vars = {**(env_vars or {}), "DREMIO_TOKEN": dremio_token}
+    if not connections:
+        return env_vars or {}
+
+    # Effective target: explicit arg wins; else the profile's default target.
+    target = explicit_target
+    if not target:
+        try:
+            target = read_default_target(worktree, resolve_profile_name(worktree))
+        except Exception:
+            target = None
+    if not target:
+        return env_vars or {}
+
+    engine = engine_for_target(connections, target)
+    if not is_production_engine(engine):
+        return env_vars or {}
+
+    if "maintainer" not in user.roles:
+        _audit(sub=user.sub, action="prod_run_denied", target=project_id,
+               extra={"target_env": target, "engine": engine})
+        raise HTTPException(status_code=403,
+                            detail="Production Engine requires the maintainer role")
+
+    # Exchange the still-valid Keycloak token NOW (the job outlives it; ADR §6).
+    header = request.headers.get("Authorization", "")
+    kc_token = header[len("Bearer "):] if header.startswith("Bearer ") else ""
+    try:
+        dremio_token = exchange_for_dremio(kc_token)
+    except TokenExchangeError as e:
+        raise HTTPException(status_code=502, detail=f"Dremio token exchange failed: {e}")
+    return {**(env_vars or {}), "DREMIO_TOKEN": dremio_token}
 ```
 
-> `request` is already a handler param (the route is `async def ... (request: Request, ...)`);
-> if not, add `request: Request` to the signature. `env_vars` is the dict already
-> built from the env cookie earlier in the handler — this merges the token in.
+In the `/api/dbt-command` handler, insert this **immediately before
+`background_tasks.add_task(...)`** (line ~203) — at that point `target`, `env_vars`
+(built from the env cookie at line ~200), and `request` are all in scope (Gap D):
+```python
+    env_vars = _engine_gate(user, request, action.path, path, target, env_vars)
+```
+
+> `request: Request` is already a parameter of `dbt_command` (verified line 144) —
+> no signature change needed.
 
 - [ ] **Step 4: Confirm the token never reaches logs**
 
@@ -1053,6 +1112,87 @@ Expected: all pass.
 ```bash
 git add backend/routes/dbt_routes.py backend/utils/secret_scrub.py backend/tests/test_prod_engine_gate.py backend/tests/test_token_scrubbed.py
 git commit -m "feat(engine): gate Production Engine by role + inject exchanged Dremio token"
+```
+
+---
+
+## Task 8b: Close the `dbt show` preview bypass (issue 13 — Gap B)
+
+**Files:**
+- Modify: `backend/routes/dbt_routes.py` (the `/api/dbt-show-model` handler, ~line 310)
+- Test: `backend/tests/test_show_prod_gate.py`
+
+> `dbt show` (model data preview) runs dbt against the profile's **default target**
+> with **no `--target`** (verified: the command at ~line 367 omits it). Without this
+> task a developer whose default target is Dremio would preview Production data with
+> no role gate and no token. Route it through the same `_engine_gate` (Task 8) using
+> an empty explicit target, so the effective-target logic resolves the prod default.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `backend/tests/test_show_prod_gate.py`:
+```python
+from unittest.mock import patch
+from fastapi.testclient import TestClient
+from main import app
+
+
+def _open(client, tok):
+    client.post("/api/open-project", json={"id": "p1"},
+                headers={"Authorization": f"Bearer {tok}"})
+
+
+def _set_default_prod(client, tok):
+    # set-target requires maintainer for a prod default, so do it as maintainer.
+    client.post("/api/connections/set-target", json={"id": "p1", "target": "prod"},
+                headers={"Authorization": f"Bearer {tok}"})
+
+
+def test_developer_preview_blocked_when_default_is_prod(catalog_with_conn, make_token, monkeypatch, tmp_path):
+    monkeypatch.setenv("GIT_REPOS_PATH", str(tmp_path / "users"))
+    client = TestClient(app)
+    maint = make_token(sub="user-a", email="a@x.io", roles=["maintainer"])
+    _open(client, maint)
+    _set_default_prod(client, maint)  # default target now 'prod' (dremio)
+
+    # Same user/worktree, but now acting as a developer token → must be blocked.
+    dev = make_token(sub="user-a", email="a@x.io", roles=["developer"])
+    r = client.post("/api/dbt-show-model",
+                    json={"path": "p1", "model": "stg_x", "limit": 5},
+                    headers={"Authorization": f"Bearer {dev}"})
+    assert r.status_code == 403
+```
+
+- [ ] **Step 2: Run test, verify it fails**
+
+Run: `cd backend && python -m pytest tests/test_show_prod_gate.py -v`
+Expected: FAIL — preview runs (200) instead of 403.
+
+- [ ] **Step 3: Call the gate in `dbt_show_model`**
+
+In the `/api/dbt-show-model` handler, **before** the line
+`env_vars = get_env_vars_from_cookie(http_request, str(path))` is consumed into
+`env` (i.e. right after `env_vars` is read, before `env = get_dbt_env(path, env_vars)`),
+add:
+```python
+        # Engine gate: dbt show has no --target, so it uses the profile default.
+        # Resolve the effective (default) target and gate/inject for production.
+        env_vars = _engine_gate(user, http_request, show_request.path, path, "", env_vars)
+```
+
+> `_engine_gate` is the module helper from Task 8. Passing `""` as the explicit
+> target forces it to read the profile's default target — exactly what `dbt show` uses.
+
+- [ ] **Step 4: Run test, verify it passes**
+
+Run: `cd backend && python -m pytest tests/test_show_prod_gate.py -v`
+Expected: 1 passed.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add backend/routes/dbt_routes.py backend/tests/test_show_prod_gate.py
+git commit -m "fix(engine): gate dbt show preview against the Production Engine"
 ```
 
 ---
@@ -1308,8 +1448,8 @@ Expected: secret-key rejection tests pass.
 
 - [ ] **Step 3: Production Engine is role-gated and identity-passed**
 
-Run: `cd backend && python -m pytest tests/test_prod_engine_gate.py tests/test_test_connection.py -v`
-Expected: developer 403 on prod; maintainer run injects an exchanged token.
+Run: `cd backend && python -m pytest tests/test_prod_engine_gate.py tests/test_show_prod_gate.py tests/test_test_connection.py -v`
+Expected: developer 403 on prod run AND on prod-default preview; maintainer run injects an exchanged token.
 
 - [ ] **Step 4: DuckDB pipeline proven**
 
@@ -1348,7 +1488,13 @@ on the new endpoints. Resolve CRITICAL/HIGH before declaring M3 done.
 
 - **Issue 11 (adapters + DuckDB run):** Task 1 (install three adapters) + Tasks 3/5 (profiles render incl. DuckDB) + Task 10 (end-to-end DuckDB run) + Task 11 (DuckDB selectable as target). ✅
 - **Issue 12 (connection mgmt + test + target switch):** Task 2 (validation/no-secrets), Task 3/4 (profiles render + name), Task 6 (get/set admin + set-target), Task 9 (Test Connection for DuckDB/Spark), Task 11 (UI). ✅
-- **Issue 13 (Dremio identity passthrough):** Task 7 (token-exchange seam), Task 8 (job-start exchange + injection + developer block + scrub), Task 9 (Test Connection as user, maintainer-gated), Task 12 Step 7 (HITL trust config). ✅
+- **Issue 13 (Dremio identity passthrough):** Task 7 (token-exchange seam), Task 8 (effective-target gate + job-start exchange + injection + developer block + scrub), Task 8b (`dbt show` preview gate), Task 9 (Test Connection as user, maintainer-gated), Task 12 Step 7 (HITL trust config). ✅
+- **Engine-gate completeness (Gaps A–D, found during the M3 readiness audit):**
+  - **A — effective target:** `_engine_gate` resolves explicit target OR the profile default, so an empty `--target` cannot silently reach a production default. (Task 8)
+  - **B — preview bypass:** `dbt show` is routed through the same gate. (Task 8b)
+  - **C — default-target RBAC:** non-maintainers cannot set a Production Engine as their default target. (Task 6)
+  - **D — placement:** the gate call sits immediately before `add_task`, where `target`/`env_vars`/`request` are all in scope. (Task 8)
+  - The deprecated `run/compile/seed/test` endpoints delegate to `dbt_command`, so they inherit the gate for free (verified). The gate is centralised in one `_engine_gate` helper — any new dbt-executing endpoint must call it.
 - **RBAC coupling (issue 08):** admin gate on `/api/connections/set` (Task 6); maintainer gate on the Production Engine at run and at Test Connection (Tasks 8, 9). Closes the "production-engine gate deferred to M3" note from the M2 self-review. ✅
 - **profiles.yml ownership:** dbt-ui generates it; a user-edited file is overwritten on open/target-switch. This is intentional and keeps engine config centralised/auditable. If a project needs a hand-tuned profile, that is a follow-up, not M3.
 - **M2 coupling — ALIGNED (2026-05-31):** the M2 plan was edited to match this plan's assumptions: catalog `load()` (was `list_entries`), `get(id) -> dict | None` (was `get_entry`, which raised 404; callers now raise 404 themselves), entry key `id`, persist helper `_save`, `/api/open-project` body `{id}` returning `worktree`, and `entry.get("name", ...)` so M3's name-less connection fixtures don't KeyError. The only remaining inline reconcile is whether the real `/api/dbt-command` handler already declares `request: Request` (Task 8) — add it if absent.

@@ -13,6 +13,7 @@ import ConfirmModal from './ConfirmModal'
 import { PanelLeftOpen } from 'lucide-react'
 import { apiUrl, apiFetch } from '../../config/api'
 import ConnectionPanel from '../dbt/ConnectionPanel'
+import WorkspaceSettingsModal from './WorkspaceSettingsModal'
 
 interface OperationResult {
   success: boolean
@@ -23,11 +24,12 @@ interface OperationResult {
 
 interface MainLayoutProps {
   projectPath: string
+  projectName: string
   dbtVersion: string
   onChangeProject: () => void
 }
 
-function MainLayout({ projectPath, dbtVersion: initialDbtVersion, onChangeProject }: MainLayoutProps) {
+function MainLayout({ projectPath, projectName, dbtVersion: initialDbtVersion, onChangeProject }: MainLayoutProps) {
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [showSidebar, setShowSidebar] = useState(true)
   const [showMetadata, setShowMetadata] = useState(true)
@@ -51,6 +53,7 @@ function MainLayout({ projectPath, dbtVersion: initialDbtVersion, onChangeProjec
   const [hasMetaDVPackage, setHasMetaDVPackage] = useState(false)
   const [metaDVEnabled, setMetaDVEnabled] = useState(true)
   const [userRoles, setUserRoles] = useState<string[]>([])
+  const [showWorkspaceSettings, setShowWorkspaceSettings] = useState(false)
   const saveRef = useRef<(() => Promise<void>) | null>(null)
 
   // Get list of models affected by a selector using dbt ls
@@ -604,6 +607,15 @@ function MainLayout({ projectPath, dbtVersion: initialDbtVersion, onChangeProjec
             {projectPath && (
               <ConnectionPanel projectId={projectPath} userRoles={userRoles} />
             )}
+            {projectPath && projectPath.startsWith('workspaces/') && (
+              <button
+                className="btn-secondary"
+                style={{ margin: '0 8px 8px 8px', width: 'calc(100% - 16px)' }}
+                onClick={() => setShowWorkspaceSettings(true)}
+              >
+                Workspace Settings
+              </button>
+            )}
           </Pane>
           <Pane>
             <SplitPane direction="vertical">
@@ -773,6 +785,16 @@ function MainLayout({ projectPath, dbtVersion: initialDbtVersion, onChangeProjec
           confirmLabel="Create"
           cancelLabel="Cancel"
           variant="warning"
+        />
+      )}
+      {showWorkspaceSettings && projectPath.startsWith('workspaces/') && (
+        <WorkspaceSettingsModal
+          workspaceId={projectPath.split('/').pop() || ''}
+          workspaceName={projectName}
+          onClose={() => setShowWorkspaceSettings(false)}
+          onUpdated={() => {
+            setShowWorkspaceSettings(false)
+          }}
         />
       )}
     </div>

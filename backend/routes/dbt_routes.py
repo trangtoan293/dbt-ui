@@ -21,6 +21,7 @@ from utils.user_paths import resolve_under_root
 from utils.secret_scrub import scrub
 from utils.rate_limit import RateLimiter
 from utils import catalog
+from utils import workspace as workspace_mod
 from utils.connections import engine_for_target, is_production_engine
 from utils.dremio_token import exchange_for_dremio, TokenExchangeError
 from utils.profiles import resolve_profile_name, read_default_target
@@ -37,7 +38,14 @@ def _engine_gate(user, request, project_id: str, worktree, explicit_target: str,
     Dev Engines pass through untouched. Returns the (possibly augmented) env_vars.
     Raises HTTPException(403) on a non-maintainer; (502) on exchange failure."""
     entry = catalog.get(project_id)
-    connections = entry.get("connections", {}) if entry else {}
+    if entry:
+        connections = entry.get("connections", {})
+    else:
+        # Workspaces are addressed by the relative path "workspaces/<id>";
+        # the workspace store keys on the bare id.
+        ws_id = project_id.split("/", 1)[1] if project_id.startswith("workspaces/") else project_id
+        ws = workspace_mod.get_workspace(user.sub, ws_id)
+        connections = ws.get("connections", {}) if ws else {}
     if not connections:
         return env_vars or {}
 
@@ -53,7 +61,7 @@ def _engine_gate(user, request, project_id: str, worktree, explicit_target: str,
 
     try:
         engine = engine_for_target(connections, target)
-    except HTTPException:
+    except (HTTPException, KeyError):
         return env_vars or {}
 
     if not is_production_engine(engine):
