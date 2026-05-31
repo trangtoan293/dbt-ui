@@ -30,6 +30,18 @@ function Editor({
   const [formattedJson, setFormattedJson] = useState('')
   const [formatting, setFormatting] = useState(false)
 
+  // Manifest symbols for autocomplete
+  const [symbols, setSymbols] = useState<{ models: string[]; sources: { source: string; table: string }[]; macros: string[] }>({ models: [], sources: [], macros: [] })
+
+  useEffect(() => {
+    if (!projectPath) return
+    apiFetch(apiUrl('/api/manifest-symbols'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: projectPath }),
+    }).then(r => r.json()).then(setSymbols).catch(() => {})
+  }, [projectPath, compilationTrigger])
+
   // File content hook
   const {
     content,
@@ -242,6 +254,7 @@ function Editor({
             compiledSql={compiledSql}
             formattedJson={formattedJson}
             selectedFile={selectedFile}
+            symbols={symbols}
             onContentChange={handleContentChange}
             onPreviewConfirm={handlePreviewConfirm}
             onPreviewCancel={handlePreviewCancel}
