@@ -27,6 +27,22 @@ router = APIRouter()
 DBT_ADAPTERS = ["dbt-duckdb", "dbt-spark", "dbt-dremio"]
 
 
+FORMAT_TOOLS = ["sqlfluff"]
+
+
+def install_format_tools(venv_python, path, output_lines):
+    """Install SQL format tooling into the project venv (best-effort per tool)."""
+    for tool in FORMAT_TOOLS:
+        result = run_command(
+            ["uv", "pip", "install", tool, "--python", str(venv_python)],
+            path, timeout=300,
+        )
+        if result.success:
+            output_lines.append(f"Successfully installed {tool}")
+        else:
+            output_lines.append(f"Warning: failed to install {tool}: {result.stderr}")
+
+
 def install_adapters(venv_python, path, output_lines):
     """Install the dbt engine adapters into the project venv. Best-effort per
     adapter so one failing adapter does not block the others; failures are
@@ -187,6 +203,9 @@ def _recreate_venv_sync(project_path: ProjectPath, user_id: str):
     # Install engine adapters (issue 11)
     output_lines.append("\nInstalling engine adapters...")
     install_adapters(venv_python, path, output_lines)
+
+    output_lines.append("\nInstalling SQL format tools...")
+    install_format_tools(venv_python, path, output_lines)
 
     # Get installed dbt version
     version_result = run_command(
