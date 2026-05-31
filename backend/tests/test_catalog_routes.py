@@ -11,7 +11,7 @@ def patch_jwks(monkeypatch, rsa_key):
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("CATALOG_PATH", str(tmp_path / "catalog.json"))
-    monkeypatch.setenv("GIT_REPOS_PATH", str(tmp_path / "users"))
+    monkeypatch.setenv("GIT_REPOS_PATH", str(tmp_path))
     from main import app
     return TestClient(app)
 

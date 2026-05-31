@@ -8,6 +8,8 @@ import os
 import uuid
 from pathlib import Path
 from fastapi import HTTPException
+from utils.input_validation import validate_git_branch_name
+from utils.user_paths import git_repos_path
 
 
 def _catalog_path() -> Path:
@@ -36,11 +38,20 @@ def get(entry_id: str) -> dict | None:
 
 def add_entry(name: str, repo_path: str, main_branch: str = "main") -> dict:
     repo = Path(repo_path).resolve()
+    # Confine canonical repos to GIT_REPOS_PATH so admins cannot register
+    # arbitrary server paths and expose them to all users.
+    try:
+        repo.relative_to(git_repos_path())
+    except ValueError:
+        raise HTTPException(status_code=400,
+                            detail="repo_path must be under GIT_REPOS_PATH")
     if not (repo / ".git").exists():
         raise HTTPException(status_code=400,
                             detail="repo_path is not a git repository")
+    # Validate branch name to prevent git argument injection.
+    validated_branch = validate_git_branch_name(main_branch)
     entry = {"id": uuid.uuid4().hex, "name": name,
-             "repo_path": str(repo), "main_branch": main_branch}
+             "repo_path": str(repo), "main_branch": validated_branch}
     entries = load()
     entries.append(entry)
     _save(entries)

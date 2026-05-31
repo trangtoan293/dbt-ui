@@ -438,6 +438,7 @@ async def git_stage_files(request: GitStageRequest, user: CurrentUser = Depends(
             else:
                 print(f"[git-stage] Failed to stage {file_path}: {result.stderr}")
 
+        audit(sub=user.sub, action="git_stage", target=str(path), extra={"files": staged_files})
         return {
             "success": True,
             "staged_files": staged_files,
@@ -491,9 +492,7 @@ async def git_unstage_files(request: GitStageRequest, user: CurrentUser = Depend
             result = run_git_command(['reset', 'HEAD', '--', git_file_path], path, git_root, timeout=10)
             if result.success:
                 unstaged_files.append(file_path)
-            else:
-                print(f"[git-unstage] Failed to unstage {file_path}: {result.stderr}")
-
+        audit(sub=user.sub, action="git_unstage", target=str(path), extra={"files": unstaged_files})
         return {
             "success": True,
             "unstaged_files": unstaged_files,

@@ -12,13 +12,13 @@ def patch_jwks(monkeypatch, rsa_key):
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("GIT_REPOS_PATH", str(tmp_path / "users"))
+    monkeypatch.setenv("GIT_REPOS_PATH", str(tmp_path))
     from main import app
     return TestClient(app)
 
 
 def test_commit_uses_keycloak_identity(client, make_token, git_project, tmp_path, monkeypatch):
-    monkeypatch.setenv("GIT_REPOS_PATH", str(tmp_path / "users"))
+    monkeypatch.setenv("GIT_REPOS_PATH", str(tmp_path))
     wt = provision(sub="dev1", project_id="p1", repo_path=str(git_project), main_branch="main")
     (import_pathlib := __import__("pathlib").Path(wt) / "models" / "new.sql").write_text("select 2\n")
 

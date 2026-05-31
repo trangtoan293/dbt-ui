@@ -45,9 +45,13 @@ def provision(sub: str, project_id: str, repo_path: str, main_branch: str = "mai
 
 
 def diff_against_main(repo_path: str, sub: str, main_branch: str = "main") -> str:
-    """Unified diff of the user's branch vs Main."""
+    """Unified diff of the user's branch vs Main.
+
+    Uses refs directly so we never touch the working-tree checkout, avoiding
+    races with concurrent merge_into_main operations.
+    """
     repo = Path(repo_path).resolve()
-    r = _git(repo, "diff", f"{main_branch}...{_branch_name(sub)}")
+    r = _git(repo, "diff", f"refs/heads/{main_branch}...refs/heads/{_branch_name(sub)}")
     if r.returncode != 0:
         raise HTTPException(status_code=500, detail=f"diff failed: {r.stderr}")
     return r.stdout

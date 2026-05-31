@@ -6,6 +6,9 @@ from utils.catalog import add_entry, remove_entry, load, get
 @pytest.fixture(autouse=True)
 def catalog_file(tmp_path, monkeypatch):
     monkeypatch.setenv("CATALOG_PATH", str(tmp_path / "catalog.json"))
+    # git_project fixture creates its repo inside tmp_path; set GIT_REPOS_PATH
+    # to tmp_path so the new path-confinement check passes.
+    monkeypatch.setenv("GIT_REPOS_PATH", str(tmp_path))
 
 
 def test_add_and_list(git_project):
