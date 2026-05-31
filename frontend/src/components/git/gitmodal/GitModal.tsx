@@ -3,11 +3,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import { GitBranch, RefreshCw } from 'lucide-react'
 import '../GitModal.css'
-import GitCredentialsDialog from '../GitCredentialsDialog'
 import { GitModalProps } from './types'
 import { useGitStatus } from './hooks/useGitStatus'
 import { useBranches } from './hooks/useBranches'
-import { useRemoteOperations } from './hooks/useRemoteOperations'
 import { useCommit } from './hooks/useCommit'
 import BranchSection from './components/BranchSection'
 import StagedFiles from './components/StagedFiles'
@@ -19,7 +17,6 @@ function GitModal({ projectPath, onClose, onBranchChange, onGitChange, onTreeRef
   const [error, setError] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
 
-  // Git status hook
   const {
     gitStatus,
     stagedFiles,
@@ -36,7 +33,6 @@ function GitModal({ projectPath, onClose, onBranchChange, onGitChange, onTreeRef
     getAllChangedFiles,
   } = useGitStatus({ projectPath, onGitChange })
 
-  // Branch hook
   const {
     branchState,
     branchLoading,
@@ -55,28 +51,10 @@ function GitModal({ projectPath, onClose, onBranchChange, onGitChange, onTreeRef
     canDeleteBranch,
   } = useBranches({ projectPath, onBranchChange, onGitChange, onTreeRefresh })
 
-  // Refresh status helper
   const refreshStatus = useCallback(async () => {
     await Promise.all([fetchGitStatus(), fetchStagedFiles()])
   }, [fetchGitStatus, fetchStagedFiles])
 
-  // Remote operations hook
-  const {
-    remoteState,
-    pushing,
-    pulling,
-    showCredentialsDialog,
-    pendingOperation,
-    storedUsername,
-    fetchBranchInfo,
-    handlePush,
-    handlePull,
-    handleCredentialsSubmit,
-    handleUseStoredCredentials,
-    handleCredentialsCancel,
-  } = useRemoteOperations({ projectPath, onGitChange, onTreeRefresh, onRefreshStatus: refreshStatus })
-
-  // Commit hook
   const {
     commitMessage,
     committing,
@@ -84,22 +62,19 @@ function GitModal({ projectPath, onClose, onBranchChange, onGitChange, onTreeRef
     handleCommit: commitHandler,
   } = useCommit({ projectPath, stagedFiles, onGitChange, onRefreshStatus: refreshStatus })
 
-  // Check if any operation is in progress
-  const isAnyOperationInProgress = loading || branchLoading || committing || pushing || pulling || operationInProgress
+  const isAnyOperationInProgress = loading || branchLoading || committing || operationInProgress
 
-  // Refresh all data
   const refreshAll = useCallback(async () => {
     setLoading(true)
     setError('')
-    await Promise.all([fetchGitStatus(), fetchStagedFiles(), fetchBranches(), fetchBranchInfo()])
+    await Promise.all([fetchGitStatus(), fetchStagedFiles(), fetchBranches()])
     setLoading(false)
-  }, [fetchGitStatus, fetchStagedFiles, fetchBranches, fetchBranchInfo])
+  }, [fetchGitStatus, fetchStagedFiles, fetchBranches])
 
   useEffect(() => {
     refreshAll()
   }, [refreshAll])
 
-  // Handle staging files
   const handleStageSelected = async () => {
     const result = await stageSelectedFiles()
     if (result.success) {
@@ -110,7 +85,6 @@ function GitModal({ projectPath, onClose, onBranchChange, onGitChange, onTreeRef
     }
   }
 
-  // Handle unstaging file
   const handleUnstageFile = async (file: string) => {
     const result = await unstageFile(file)
     if (!result.success && result.error) {
@@ -118,7 +92,6 @@ function GitModal({ projectPath, onClose, onBranchChange, onGitChange, onTreeRef
     }
   }
 
-  // Handle commit
   const handleCommit = async () => {
     const result = await commitHandler()
     if (result.success) {
@@ -129,7 +102,6 @@ function GitModal({ projectPath, onClose, onBranchChange, onGitChange, onTreeRef
     }
   }
 
-  // Handle branch creation
   const handleBranchCreate = async () => {
     const result = await handleCreateBranch()
     if (result.success) {
@@ -140,20 +112,17 @@ function GitModal({ projectPath, onClose, onBranchChange, onGitChange, onTreeRef
     }
   }
 
-  // Handle branch checkout
   const handleBranchCheckout = async (branch: string) => {
     const result = await handleCheckoutBranch(branch)
     if (result.success) {
       setSuccessMessage(`Switched to branch: ${branch}`)
       setTimeout(() => setSuccessMessage(''), 3000)
       await refreshStatus()
-      await fetchBranchInfo()
     } else if (result.error) {
       setError(result.error)
     }
   }
 
-  // Handle branch deletion
   const handleBranchDelete = async (branch: string) => {
     const result = await handleDeleteBranch(branch)
     if (result.success) {
@@ -164,31 +133,8 @@ function GitModal({ projectPath, onClose, onBranchChange, onGitChange, onTreeRef
     }
   }
 
-  // Handle push
-  const handlePushClick = async () => {
-    try {
-      await handlePush()
-      setSuccessMessage('Pushed successfully')
-      setTimeout(() => setSuccessMessage(''), 3000)
-    } catch (err) {
-      if (err instanceof Error) {
-        setError(err.message)
-      }
-    }
-  }
-
-  // Handle pull
-  const handlePullClick = async () => {
-    try {
-      await handlePull()
-      setSuccessMessage('Pulled successfully')
-      setTimeout(() => setSuccessMessage(''), 3000)
-    } catch (err) {
-      if (err instanceof Error) {
-        setError(err.message)
-      }
-    }
-  }
+  // Suppress unused warning — gitStatus used by callers for change detection
+  void gitStatus
 
   const changedFiles = getAllChangedFiles()
   const totalChanges = changedFiles.length + stagedFiles.length
@@ -210,30 +156,23 @@ function GitModal({ projectPath, onClose, onBranchChange, onGitChange, onTreeRef
         </div>
 
         <div className="git-modal-content">
-          {/* Branch Section */}
           <BranchSection
             branchState={branchState}
-            remoteState={remoteState}
             showBranchDropdown={showBranchDropdown}
             showNewBranchInput={showNewBranchInput}
             newBranchName={newBranchName}
             isAnyOperationInProgress={isAnyOperationInProgress}
-            pushing={pushing}
-            pulling={pulling}
             onShowBranchDropdown={setShowBranchDropdown}
             onShowNewBranchInput={setShowNewBranchInput}
             onNewBranchNameChange={setNewBranchName}
             onCheckoutBranch={handleBranchCheckout}
             onCreateBranch={handleBranchCreate}
             onDeleteBranch={handleBranchDelete}
-            onPush={handlePushClick}
-            onPull={handlePullClick}
             isBranchDisabled={isBranchDisabled}
             getBranchDisabledReason={getBranchDisabledReason}
             canDeleteBranch={canDeleteBranch}
           />
 
-          {/* Progress Bar */}
           {isAnyOperationInProgress && operationMessage && (
             <div className="git-operation-progress">
               <div className="git-progress-bar">
@@ -243,7 +182,6 @@ function GitModal({ projectPath, onClose, onBranchChange, onGitChange, onTreeRef
             </div>
           )}
 
-          {/* Messages */}
           {error && <div className="git-modal-error">{error}</div>}
           {successMessage && <div className="git-modal-success">{successMessage}</div>}
 
@@ -251,14 +189,12 @@ function GitModal({ projectPath, onClose, onBranchChange, onGitChange, onTreeRef
 
           {!loading && (
             <>
-              {/* Staged Files Section */}
               <StagedFiles
                 stagedFiles={stagedFiles}
                 isAnyOperationInProgress={isAnyOperationInProgress}
                 onUnstageFile={handleUnstageFile}
               />
 
-              {/* Commit Section */}
               {stagedFiles.length > 0 && (
                 <CommitSection
                   commitMessage={commitMessage}
@@ -269,7 +205,6 @@ function GitModal({ projectPath, onClose, onBranchChange, onGitChange, onTreeRef
                 />
               )}
 
-              {/* Unstaged Changes Section */}
               <UnstagedChanges
                 changedFiles={changedFiles}
                 selectedFiles={selectedFiles}
@@ -293,19 +228,6 @@ function GitModal({ projectPath, onClose, onBranchChange, onGitChange, onTreeRef
           </button>
         </div>
       </div>
-
-      {/* Credentials Dialog */}
-      {showCredentialsDialog && pendingOperation && (
-        <GitCredentialsDialog
-          operation={pendingOperation}
-          onSubmit={handleCredentialsSubmit}
-          onCancel={handleCredentialsCancel}
-          isLoading={pushing || pulling}
-          initialUsername={storedUsername}
-          hasStoredCredentials={!!storedUsername}
-          onUseStored={storedUsername ? handleUseStoredCredentials : undefined}
-        />
-      )}
     </div>
   )
 }
