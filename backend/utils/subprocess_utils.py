@@ -35,7 +35,9 @@ def run_command(
     cmd: List[str],
     cwd: Union[str, Path],
     timeout: int = 30,
-    env: Optional[Dict[str, str]] = None
+    env: Optional[Dict[str, str]] = None,
+    *,
+    input: Optional[str] = None
 ) -> CommandResult:
     """Run a subprocess command with common options.
 
@@ -44,6 +46,8 @@ def run_command(
         cwd: Working directory to run the command in
         timeout: Timeout in seconds (default: 30)
         env: Optional environment variables (if None, inherits current env)
+        input: Optional string to pass to the process via stdin (e.g. for
+               piping a buffer to commands like ``sqlfluff format -``)
 
     Returns:
         CommandResult with returncode, stdout, and stderr
@@ -57,7 +61,8 @@ def run_command(
         text=True,
         timeout=timeout,
         cwd=str(cwd),
-        env=env
+        env=env,
+        input=input
     )
     return CommandResult(result.returncode, result.stdout, result.stderr)
 
