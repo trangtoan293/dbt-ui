@@ -65,7 +65,7 @@ app.include_router(catalog_router, dependencies=auth_dependency)
 
 @app.get("/api/me")
 async def me(user: CurrentUser = Depends(get_current_user)):
-    return {"sub": user.sub, "email": user.email, "roles": user.roles}
+    return {"sub": user.sub, "email": user.email, "name": user.name, "roles": user.roles}
 
 
 @app.get("/")

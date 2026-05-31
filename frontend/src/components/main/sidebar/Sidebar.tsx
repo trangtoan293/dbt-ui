@@ -37,7 +37,8 @@ function Sidebar({
   dbtModalOpen = false,
   onDbtModalOpenChange,
   selectedTarget = '',
-  onPackagesFileChanged
+  onPackagesFileChanged,
+  userName = ''
 }: SidebarProps) {
   // Selection state
   const [selectedIsFolder, setSelectedIsFolder] = useState(false)
@@ -298,6 +299,7 @@ function Sidebar({
         projectName={projectName}
         projectPath={projectPath}
         branchName={branchName}
+        userName={userName}
         selectedFile={selectedFile}
         selectedIsDeleted={selectedIsDeleted}
         onCreateFile={handleCreateFile}

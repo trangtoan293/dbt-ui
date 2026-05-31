@@ -12,6 +12,7 @@ from models import EnvVarsRequest, SetEnvVarsRequest
 from utils.venv_utils import get_venv_path
 from auth import get_current_user, CurrentUser
 from utils.user_paths import resolve_under_root
+from utils.audit import audit
 
 router = APIRouter()
 
@@ -169,6 +170,7 @@ async def set_env_vars(request: SetEnvVarsRequest, response: Response, user: Cur
 
     # Store in HttpOnly cookie
     set_env_vars_cookie(response, str(path), sanitized_env_vars)
+    audit(sub=user.sub, action="env_vars_set", target=str(path), extra={"keys": list(sanitized_env_vars.keys())})
 
     return {
         "success": True,

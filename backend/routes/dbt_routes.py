@@ -266,7 +266,6 @@ async def dbt_ls(ls_request: DbtLsRequest, user: CurrentUser = Depends(get_curre
             cmd.extend(["--select", selector])
         cmd.extend(["--project-dir", str(path), "--profiles-dir", str(path)])
 
-        print(f"[dbt-ls] Running: {' '.join(cmd)}")
 
         # Get environment with dbt-ui env vars loaded
         env = get_dbt_env(path)
@@ -288,7 +287,6 @@ async def dbt_ls(ls_request: DbtLsRequest, user: CurrentUser = Depends(get_curre
                 "models": models
             }
         else:
-            print(f"[dbt-ls] Failed: {result.stderr}")
             return {
                 "success": False,
                 "models": [],
@@ -301,7 +299,6 @@ async def dbt_ls(ls_request: DbtLsRequest, user: CurrentUser = Depends(get_curre
             "error": "dbt ls timed out"
         }
     except Exception as e:
-        print(f"[dbt-ls] Error: {str(e)}")
         return {
             "success": False,
             "models": [],
@@ -376,17 +373,12 @@ async def dbt_show_model(show_request: DbtShowRequest, http_request: Request, us
             "--profiles-dir", str(path)
         ]
 
-        print(f"[dbt-show-model] Running: {' '.join(cmd)}")
 
         # Get environment with env vars from HttpOnly cookie
         env_vars = get_env_vars_from_cookie(http_request, str(path))
         env = get_dbt_env(path, env_vars)
 
         result = run_command(cmd, path, timeout=120, env=env)
-
-        print(f"[dbt-show-model] Return code: {result.returncode}")
-        print(f"[dbt-show-model] Stdout: {result.stdout[:500] if result.stdout else 'empty'}")
-        print(f"[dbt-show-model] Stderr: {result.stderr[:500] if result.stderr else 'empty'}")
 
         if not result.success:
             error_msg = result.error or "Unknown error"
@@ -410,8 +402,6 @@ async def dbt_show_model(show_request: DbtShowRequest, http_request: Request, us
         columns = []
         rows = []
 
-        print(f"[dbt-show-model] Full stdout:\n{stdout}")
-
         # dbt 1.9+ outputs JSON as a multi-line pretty-printed object
         # Find JSON by looking for lines that start with '{' and extracting the complete JSON block
 
@@ -420,29 +410,24 @@ async def dbt_show_model(show_request: DbtShowRequest, http_request: Request, us
         json_match = re.search(r'\{[\s\S]*\}', stdout)
         if json_match:
             json_str = json_match.group()
-            print(f"[dbt-show-model] Found JSON block of length {len(json_str)}")
             try:
                 data = json_module.loads(json_str)
-                print(f"[dbt-show-model] Parsed JSON keys: {data.keys() if isinstance(data, dict) else 'not a dict'}")
                 if isinstance(data, dict):
                     # dbt 1.9+ format: {"node": "model_name", "show": [{...}, {...}]}
                     if 'show' in data and isinstance(data['show'], list):
                         show_data = data['show']
-                        print(f"[dbt-show-model] Found 'show' key with {len(show_data) if show_data else 0} rows")
                         if show_data and len(show_data) > 0:
                             columns = list(show_data[0].keys())
                             rows = show_data
                     # Alternative format: {"data": {"preview": [rows...]}}
                     elif 'data' in data and isinstance(data['data'], dict) and 'preview' in data['data']:
                         preview = data['data']['preview']
-                        print(f"[dbt-show-model] Found data.preview with {len(preview) if preview else 0} rows")
                         if preview and len(preview) > 0:
                             columns = list(preview[0].keys())
                             rows = preview
                     # Alternative format: {"preview": [rows...]}
                     elif 'preview' in data:
                         preview = data['preview']
-                        print(f"[dbt-show-model] Found preview with {len(preview) if preview else 0} rows")
                         if preview and len(preview) > 0:
                             columns = list(preview[0].keys())
                             rows = preview
@@ -454,14 +439,12 @@ async def dbt_show_model(show_request: DbtShowRequest, http_request: Request, us
                                 if 'column_names' in agate and 'rows' in agate:
                                     columns = agate['column_names']
                                     rows = [dict(zip(columns, row)) for row in agate['rows']]
-                                    print(f"[dbt-show-model] Found agate_table with {len(rows)} rows")
                                     break
-            except json_module.JSONDecodeError as e:
-                print(f"[dbt-show-model] JSON decode error: {e}")
+            except json_module.JSONDecodeError:
+                pass
 
         # If we couldn't parse JSON output, try to parse the text output
         if not rows and result.stdout:
-            print(f"[dbt-show-model] Trying to parse as text table output")
             # dbt show without --output json shows a table, try to parse it
             lines = result.stdout.strip().split('\n')
             # Find the header line (usually has | separators)
@@ -474,8 +457,6 @@ async def dbt_show_model(show_request: DbtShowRequest, http_request: Request, us
                         if len(parts) == len(columns):
                             row = {columns[j]: parts[j] for j in range(len(columns))}
                             rows.append(row)
-
-        print(f"[dbt-show-model] Final result: {len(columns)} columns, {len(rows)} rows")
 
         return {
             "success": True,
@@ -491,7 +472,6 @@ async def dbt_show_model(show_request: DbtShowRequest, http_request: Request, us
             "rows": []
         }
     except Exception as e:
-        print(f"[dbt-show-model] Exception: {e}")
         return {
             "success": False,
             "error": str(e),
