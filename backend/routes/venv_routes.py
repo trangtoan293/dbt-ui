@@ -22,6 +22,26 @@ from utils.audit import audit
 
 router = APIRouter()
 
+# Engine adapters installed into every project venv (issue 11).
+# DuckDB + Spark are Dev Engines; Dremio is the Production Engine (ADR 0001 §5).
+DBT_ADAPTERS = ["dbt-duckdb", "dbt-spark", "dbt-dremio"]
+
+
+def install_adapters(venv_python, path, output_lines):
+    """Install the dbt engine adapters into the project venv. Best-effort per
+    adapter so one failing adapter does not block the others; failures are
+    reported in output_lines."""
+    for adapter in DBT_ADAPTERS:
+        result = run_command(
+            ["uv", "pip", "install", adapter, "--python", str(venv_python)],
+            path,
+            timeout=300,
+        )
+        if result.success:
+            output_lines.append(f"Successfully installed {adapter}")
+        else:
+            output_lines.append(f"Warning: failed to install {adapter}: {result.stderr}")
+
 
 def _recreate_venv_sync(project_path: ProjectPath, user_id: str):
     """Synchronous helper for recreating venv - runs in thread pool."""
@@ -163,6 +183,10 @@ def _recreate_venv_sync(project_path: ProjectPath, user_id: str):
     output_lines.append(f"Successfully installed {dbt_core_spec}")
     if result.stdout:
         output_lines.append(result.stdout)
+
+    # Install engine adapters (issue 11)
+    output_lines.append("\nInstalling engine adapters...")
+    install_adapters(venv_python, path, output_lines)
 
     # Get installed dbt version
     version_result = run_command(
