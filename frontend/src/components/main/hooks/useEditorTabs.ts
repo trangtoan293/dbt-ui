@@ -34,8 +34,9 @@ export function useEditorTabs(): UseEditorTabs {
       return next
     })
     setCacheState(prev => {
-      const { [path]: _drop, ...rest } = prev
-      return rest
+      const next = { ...prev }
+      delete next[path]
+      return next
     })
   }, [])
 

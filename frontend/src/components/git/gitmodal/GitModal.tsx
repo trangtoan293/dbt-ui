@@ -18,7 +18,6 @@ function GitModal({ projectPath, onClose, onBranchChange, onGitChange, onTreeRef
   const [successMessage, setSuccessMessage] = useState('')
 
   const {
-    gitStatus,
     stagedFiles,
     selectedFiles,
     operationInProgress,
@@ -132,9 +131,6 @@ function GitModal({ projectPath, onClose, onBranchChange, onGitChange, onTreeRef
       setError(result.error)
     }
   }
-
-  // Suppress unused warning — gitStatus used by callers for change detection
-  void gitStatus
 
   const changedFiles = getAllChangedFiles()
   const totalChanges = changedFiles.length + stagedFiles.length

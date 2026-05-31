@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import './GraphView.css'
 import { Network, Play, TestTube, Hammer, Variable, ToggleLeft, ToggleRight, ChevronUp, ChevronDown, Minus, Plus, Database } from 'lucide-react'
 import LineageGraph from './LineageGraph'
@@ -30,7 +30,6 @@ interface GraphViewProps {
 }
 
 function GraphView({ projectPath, selectedFile, onNodeClick, compilationTrigger, isDbtOperationRunning, onDbtRun, onDbtSeed, onDbtTest, onDbtCompile, hasUnsavedChanges = false, onCheckUnsavedChanges, dbtModalOpen = false, onDbtModalOpenChange, profileTargets = [], selectedTarget = '', onTargetChange, venvMissing = false, hasMetaDVPackage = false, metaDVEnabled = true, onRefreshTree }: GraphViewProps) {
-  const [selectedNodeType, setSelectedNodeType] = useState<string | null>(null)
   const [showRunModal, setShowRunModal] = useState(false)
   const [showTestModal, setShowTestModal] = useState(false)
   const [showCompileModal, setShowCompileModal] = useState(false)
@@ -43,23 +42,19 @@ function GraphView({ projectPath, selectedFile, onNodeClick, compilationTrigger,
   const [upstreamDepth, setUpstreamDepth] = useState(2)
   const [downstreamDepth, setDownstreamDepth] = useState(2)
 
-  // Reset selectedNodeType when file changes (to clear state from previous lineage clicks)
-  useEffect(() => {
-    setSelectedNodeType(null)
-  }, [selectedFile])
+  // Wrapper for onNodeClick — preserves the signature but drops nodeType for LineageGraph compatibility
+  const handleNodeClickInternal = (filePath: string, _nodeType?: string) => {
+    onNodeClick(filePath)
+  }
 
   const isModel = (): boolean => {
     if (!selectedFile) return false
-    const isFolder = !selectedFile.includes('.')
-    if (isFolder) return false
     return selectedFile.endsWith('.sql') &&
            (selectedFile.includes('/models/') || selectedFile.startsWith('models/'))
   }
 
   const isSeed = (): boolean => {
     if (!selectedFile) return false
-    const isFolder = !selectedFile.includes('.')
-    if (isFolder) return false
     return selectedFile.endsWith('.csv') &&
            (selectedFile.includes('/seeds/') || selectedFile.startsWith('seeds/'))
   }
@@ -68,12 +63,6 @@ function GraphView({ projectPath, selectedFile, onNodeClick, compilationTrigger,
     if (!filePath) return null
     const fileName = filePath.split('/').pop() || ''
     return fileName.replace(/\.csv$/, '')
-  }
-
-  // Wrapper for onNodeClick to capture node type
-  const handleNodeClickInternal = (filePath: string, nodeType?: string) => {
-    setSelectedNodeType(nodeType || null)
-    onNodeClick(filePath)
   }
 
   const getModelName = (filePath: string | null): string | null => {

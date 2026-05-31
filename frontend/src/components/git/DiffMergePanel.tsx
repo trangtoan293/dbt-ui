@@ -29,7 +29,9 @@ export default function DiffMergePanel({ projectId, onMerged, onClose }: DiffMer
         const u = await r.json()
         setIsMaintainer(u.roles?.includes('maintainer') || u.roles?.includes('admin'))
       }
-    } catch {}
+    } catch (e) {
+      console.error('Failed to load user:', e)
+    }
   }
 
   const loadDiff = async () => {

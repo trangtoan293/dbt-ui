@@ -203,10 +203,8 @@ const LineageGraphInner = memo(function LineageGraphInner({
 
   // Check if we should show the graph
   const selectedNodeName = selectedFile?.split('/').pop()?.replace(/\.(sql|yml|yaml|csv)$/, '')
-  const isFolder = selectedFile ? !selectedFile.includes('.') : false
-  // Only consider it a valid selection if the node actually exists in the lineage graph
   const nodeExistsInLineage = selectedNodeName ? allDbtNodes.some(n => n.name === selectedNodeName) : false
-  const hasValidSelection = selectedFile && selectedNodeName && !isFolder && nodeExistsInLineage
+  const hasValidSelection = selectedFile && selectedNodeName && nodeExistsInLineage
 
   // Memoize graph building - this is the expensive operation
   const { graphNodes, graphEdges, isTruncated, nodeCountBeforeTruncation } = useMemo(() => {

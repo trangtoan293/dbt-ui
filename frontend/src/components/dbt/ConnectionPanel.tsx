@@ -19,7 +19,6 @@ export default function ConnectionPanel({ projectId, userRoles }: ConnectionPane
   const [error, setError] = useState('')
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; output: string } | null>>({})
   const [testing, setTesting] = useState<Record<string, boolean>>({})
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const asCfg = (v: unknown): ConnectionConfig => v as ConnectionConfig
 
   const isAdmin = userRoles.includes('admin')
@@ -36,7 +35,9 @@ export default function ConnectionPanel({ projectId, userRoles }: ConnectionPane
         const data = await r.json()
         setConnections(data.connections || {})
       }
-    } catch {}
+    } catch (e) {
+      console.error('Failed to load connections:', e)
+    }
   }, [projectId])
 
   useEffect(() => {

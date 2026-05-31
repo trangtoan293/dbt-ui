@@ -32,7 +32,7 @@ export function useGitStatus({ projectPath, onGitChange }: UseGitStatusProps): U
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null)
   const [stagedFiles, setStagedFiles] = useState<string[]>([])
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set())
-  const [loading, setLoading] = useState(true)
+  const [loading] = useState(true)
   const [operationInProgress, setOperationInProgress] = useState(false)
   const [operationMessage, setOperationMessage] = useState('')
 

@@ -169,7 +169,9 @@ function MainLayout({ projectPath, projectName, dbtVersion: initialDbtVersion, o
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: projectPath, target }),
       })
-    } catch {}
+    } catch (e) {
+      console.error('Failed to set connection target:', e)
+    }
   }
 
   useEffect(() => {

@@ -65,12 +65,14 @@ function Editor({
   // File save hook
   const {
     saving,
+    saveError,
     conflictData,
     handleSave,
     handleConflictCancel,
     handleAcceptIncoming,
     handleAcceptMyChanges,
-    handleSaveWithConflicts
+    handleSaveWithConflicts,
+    clearSaveError
   } = useFileSave({
     selectedFile,
     projectPath,
@@ -101,10 +103,6 @@ function Editor({
     loadingCompiled,
     loadCompiledSql
   } = useCompiledSql()
-
-  // Single source of truth for the active tab's dirty state: the tab cache.
-  // Falls back to local content state when no tab store is wired.
-  const activeDirty = tabs && selectedFile ? tabs.isDirty(selectedFile) : hasUnsavedChanges
 
   // File type checks
   const isCsvFile = selectedFile?.endsWith('.csv') || false
@@ -158,7 +156,7 @@ function Editor({
         saveRef.current = null
       }
     }
-  }, [saveRef, selectedFile, projectPath, content, saving])
+  }, [saveRef, selectedFile, projectPath, content, originalContent, saving])
 
   // Reset compiled SQL, formatted JSON when file changes; restore preview from cache
   useEffect(() => {
@@ -260,14 +258,16 @@ function Editor({
           isSqlModel={isSqlModel}
           isJsonFile={isJsonFile}
           isBinaryFile={isBinaryFile}
-          hasUnsavedChanges={activeDirty}
+          hasUnsavedChanges={hasUnsavedChanges}
           saving={saving}
+          saveError={saveError}
           showMetadata={showMetadata}
           showSidebar={showSidebar}
           onViewModeChange={handleViewModeChange}
           onFormat={handleFormat}
           formatting={formatting}
           onSave={handleSave}
+          onClearSaveError={clearSaveError}
           onToggleMetadata={onToggleMetadata}
           onToggleSidebar={onToggleSidebar}
         />

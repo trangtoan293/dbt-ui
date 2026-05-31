@@ -18,12 +18,14 @@ interface UseFileSaveProps {
 
 interface UseFileSaveResult {
   saving: boolean
+  saveError: string | null
   conflictData: ConflictData | null
   handleSave: (forceContent?: string | React.MouseEvent, forceOriginal?: string) => Promise<void>
   handleConflictCancel: () => void
   handleAcceptIncoming: () => void
   handleAcceptMyChanges: () => Promise<void>
   handleSaveWithConflicts: () => void
+  clearSaveError: () => void
 }
 
 export function useFileSave({
@@ -38,6 +40,7 @@ export function useFileSave({
   onFileSaved
 }: UseFileSaveProps): UseFileSaveResult {
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [conflictData, setConflictData] = useState<ConflictData | null>(null)
 
   const handleSave = async (forceContent?: string | React.MouseEvent, forceOriginal?: string) => {
@@ -95,10 +98,15 @@ export function useFileSave({
           onFileSaved(selectedFile)
         }
       } else {
-        console.error('Failed to save file')
+        const errorData = await response.json().catch(() => ({}))
+        const detail = errorData.detail || `Save failed (HTTP ${response.status})`
+        console.error('Failed to save file:', detail)
+        setSaveError(detail)
       }
     } catch (err) {
+      const message = err instanceof Error ? err.message : 'Error saving file'
       console.error('Error saving file:', err)
+      setSaveError(message)
     } finally {
       setSaving(false)
     }
@@ -136,18 +144,21 @@ export function useFileSave({
     if (selectedFile && onFileModified) {
       onFileModified(selectedFile, true)
     }
-    if (selectedFile && onFileSaved) {
-      onFileSaved(selectedFile)
-    }
+  }
+
+  const clearSaveError = () => {
+    setSaveError(null)
   }
 
   return {
     saving,
+    saveError,
     conflictData,
     handleSave,
     handleConflictCancel,
     handleAcceptIncoming,
     handleAcceptMyChanges,
-    handleSaveWithConflicts
+    handleSaveWithConflicts,
+    clearSaveError
   }
 }

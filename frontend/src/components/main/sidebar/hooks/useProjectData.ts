@@ -1,6 +1,6 @@
 // Hook for loading project data (name, branch, manifest)
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { apiUrl, apiFetch } from '../../../../config/api'
 
 interface UseProjectDataResult {
