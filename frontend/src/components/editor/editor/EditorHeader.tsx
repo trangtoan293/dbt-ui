@@ -15,6 +15,8 @@ interface EditorHeaderProps {
   showMetadata: boolean
   showSidebar?: boolean
   onViewModeChange: (mode: ViewMode) => void
+  onFormat?: () => void
+  formatting?: boolean
   onSave: () => void
   onToggleMetadata: () => void
   onToggleSidebar?: () => void
@@ -32,6 +34,8 @@ function EditorHeader({
   showMetadata,
   showSidebar,
   onViewModeChange,
+  onFormat,
+  formatting,
   onSave,
   onToggleMetadata,
   onToggleSidebar
@@ -109,6 +113,13 @@ function EditorHeader({
             <FileCode2 size={16} />
           </button>
         </div>
+      )}
+
+      {selectedFile?.endsWith('.sql') && onFormat && (
+        <button className="view-toggle-btn" onClick={onFormat} disabled={formatting}
+                title="Format SQL (sqlfluff)">
+          {formatting ? '…' : 'Format'}
+        </button>
       )}
 
       <button

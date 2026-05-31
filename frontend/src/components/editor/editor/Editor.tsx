@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import '../Editor.css'
 
+import { apiFetch, apiUrl } from '../../../config/api'
 import { EditorProps, ViewMode } from './types'
 import { useFileContent } from './hooks/useFileContent'
 import { useFileSave } from './hooks/useFileSave'
@@ -27,6 +28,7 @@ function Editor({
   saveRef
 }: EditorProps) {
   const [formattedJson, setFormattedJson] = useState('')
+  const [formatting, setFormatting] = useState(false)
 
   // File content hook
   const {
@@ -141,6 +143,29 @@ function Editor({
     }
   }, [compilationTrigger])
 
+  const handleFormat = async () => {
+    if (!selectedFile || formatting) return
+    setFormatting(true)
+    try {
+      const res = await apiFetch(apiUrl('/api/format-sql'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: projectPath, file_path: selectedFile, content }),
+      })
+      const data = await res.json()
+      if (data.ok) {
+        setContent(data.formatted)
+        if (data.formatted !== originalContent) {
+          setHasUnsavedChanges(true)
+        }
+      } else {
+        console.error('Format failed:', data.error)
+      }
+    } finally {
+      setFormatting(false)
+    }
+  }
+
   const handleContentChange = (value: string | undefined) => {
     if (viewMode !== 'text') return
     const newContent = value || ''
@@ -193,6 +218,8 @@ function Editor({
           showMetadata={showMetadata}
           showSidebar={showSidebar}
           onViewModeChange={handleViewModeChange}
+          onFormat={handleFormat}
+          formatting={formatting}
           onSave={handleSave}
           onToggleMetadata={onToggleMetadata}
           onToggleSidebar={onToggleSidebar}
