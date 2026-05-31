@@ -2,15 +2,17 @@ version: '3.8'
 
 # Shared environment variables used by both services
 x-shared-env: &shared-env
-  # Authentication credentials (optional - if not set, auth is disabled)
-  DBT_UI__BACKEND_USER: ${DBT_UI__BACKEND_USER:-}
-  DBT_UI__BACKEND_PASSWORD: ${DBT_UI__BACKEND_PASSWORD:-}
+  # Keycloak OIDC (REQUIRED)
+  KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER}
+  KEYCLOAK_JWKS_URI: ${KEYCLOAK_JWKS_URI}
+  KEYCLOAK_AUDIENCE: ${KEYCLOAK_AUDIENCE:-account}
+  # Git & Worktree paths
+  GIT_REPOS_PATH: ${GIT_REPOS_PATH:-./git-repos}
+  CATALOG_PATH: ${CATALOG_PATH:-./catalog.json}
   # Frontend lineage graph settings
   DBT_UI__FRONTEND_LINEAGE_MAX_NODES: ${DBT_UI__FRONTEND_LINEAGE_MAX_NODES:-200}
   # MetaDV feature toggle (default: true - enabled)
   DBT_UI__METADV_ENABLED: ${DBT_UI__METADV_ENABLED:-true}
-  # Git credentials cookie max age in seconds (default: 30 days)
-  DBT_UI__BACKEND_GIT_CREDS_COOKIE_MAX_AGE: ${DBT_UI__BACKEND_GIT_CREDS_COOKIE_MAX_AGE:-2592000}
   # Backend-specific
   PYTHONUNBUFFERED: 1
   # Frontend URL for CORS (default: http://localhost for Docker)
