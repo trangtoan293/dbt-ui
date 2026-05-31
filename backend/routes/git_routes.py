@@ -546,10 +546,10 @@ async def git_get_staged_files(request: GitStagedFilesRequest, user: CurrentUser
 @router.post("/api/git-commit")
 async def git_commit(request: GitCommitRequest, user: CurrentUser = Depends(get_current_user)):
     """Create a git commit with the staged files."""
-    # Validate all inputs for security
-    user_name = validate_git_user_name(request.user_name)
-    user_email = validate_git_user_email(request.user_email)
     message = validate_commit_message(request.message)
+    # Author identity comes from the Keycloak JWT, not the request body.
+    author_name = user.name or user.email
+    author_email = user.email
 
     path = resolve_under_root(user.sub, request.path)
 
@@ -564,17 +564,18 @@ async def git_commit(request: GitCommitRequest, user: CurrentUser = Depends(get_
 
         git_root = Path(git_root_result.stdout.strip())
 
-        # Set user config for this commit (use -c to set config for this command only)
-        # Using validated values to prevent command injection
+        commit_env = os.environ.copy()
+        commit_env.update({
+            "GIT_AUTHOR_NAME": author_name,
+            "GIT_AUTHOR_EMAIL": author_email,
+            "GIT_COMMITTER_NAME": author_name,
+            "GIT_COMMITTER_EMAIL": author_email,
+        })
         result = run_command(
-            [
-                'git', '-C', str(git_root),
-                '-c', f'user.name={user_name}',
-                '-c', f'user.email={user_email}',
-                'commit', '-m', message
-            ],
+            ['git', '-C', str(git_root), 'commit', '-m', message],
             path,
-            timeout=30
+            timeout=30,
+            env=commit_env
         )
 
         if not result.success:
