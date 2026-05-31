@@ -25,10 +25,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.backend
-    ports:
-      - "8000:8000"
     volumes:
-      # Mount for git repositories (cloned or existing local repos)
       - ${DBT_UI__GIT_REPOS_PATH:-./git-repos}:/home/dbtui/git-repos
     environment:
       <<: *shared-env
@@ -38,12 +35,38 @@ services:
       context: .
       dockerfile: docker/Dockerfile.frontend
       args:
-        # Build-time args for Vite (baked into the frontend bundle)
         DBT_UI__FRONTEND_LINEAGE_MAX_NODES: ${DBT_UI__FRONTEND_LINEAGE_MAX_NODES:-200}
         DBT_UI__METADV_ENABLED: ${DBT_UI__METADV_ENABLED:-true}
-    ports:
-      - "80:80"
     environment:
       <<: *shared-env
     depends_on:
       - backend
+
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
+    command:
+      - --provider=oidc
+      - --oidc-issuer-url=${KEYCLOAK_ISSUER}
+      - --client-id=${OAUTH2_CLIENT_ID}
+      - --client-secret=${OAUTH2_CLIENT_SECRET}
+      - --cookie-secret=${OAUTH2_COOKIE_SECRET}
+      - --cookie-secure=false
+      - --cookie-name=dbt-ui-session
+      - --upstream=http://frontend:80
+      - --http-address=0.0.0.0:4180
+      - --email-domain=*
+      - --set-authorization-header=true
+      - --pass-access-token=true
+      - --set-xauthrequest=true
+      - --skip-provider-button=true
+      - --skip-auth-route=/health
+      - --skip-auth-route=/api/health
+      - --scope=openid email profile
+      - --code-challenge-method=S256
+      - --redirect-url=http://192.168.1.54/oauth2/callback
+    environment:
+      OAUTH2_PROXY_SSL_INSECURE_SKIP_VERIFY: "true"
+    ports:
+      - "${DBT_UI__FRONTEND_PORT:-80}:4180"
+    depends_on:
+      - frontend
