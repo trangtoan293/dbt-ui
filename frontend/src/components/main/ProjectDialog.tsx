@@ -29,6 +29,11 @@ export default function ProjectDialog({ onOpen }: ProjectDialogProps) {
   const [error, setError] = useState('')
   const [showCreateModal, setShowCreateModal] = useState(false)
 
+  const [addName, setAddName] = useState('')
+  const [addRepoPath, setAddRepoPath] = useState('')
+  const [addMainBranch, setAddMainBranch] = useState('main')
+  const [adding, setAdding] = useState(false)
+
   const isAdmin = user?.roles.includes('admin') ?? false
 
   useEffect(() => {
@@ -102,10 +107,39 @@ export default function ProjectDialog({ onOpen }: ProjectDialogProps) {
     }
   }
 
+  const handleAdd = async () => {
+    if (!addName || !addRepoPath) return
+    setAdding(true)
+    setError('')
+    try {
+      const r = await apiFetch(apiUrl('/api/catalog/add'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: addName, repo_path: addRepoPath, main_branch: addMainBranch }),
+      })
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}))
+        setError(data.detail || 'Failed to add project')
+        return
+      }
+      setAddName('')
+      setAddRepoPath('')
+      setAddMainBranch('main')
+      await loadCatalog()
+    } catch (_e) {
+      setError('Failed to add project')
+    } finally {
+      setAdding(false)
+    }
+  }
+
   return (
     <div className="project-path-dialog">
       <div className="project-path-dialog-content">
         <h2>Open Project</h2>
+        <p className="dialog-subtitle" style={{ fontSize: 14, marginBottom: 20, textAlign: 'left' }}>
+          Open a personal workspace for your own dbt projects, or browse shared projects from the catalog.
+        </p>
 
         {error && <div className="error-message">{error}</div>}
 
@@ -127,7 +161,13 @@ export default function ProjectDialog({ onOpen }: ProjectDialogProps) {
         {activeTab === 'workspaces' && (
           <div>
             {workspaces.length === 0 ? (
-              <p className="no-projects">No workspaces yet. Create one below.</p>
+              <div className="no-projects">
+                <p style={{ marginBottom: 8 }}>Create your own dbt project — no admin required.</p>
+                <p style={{ fontSize: 12, color: '#6d6d6d' }}>
+                  Each workspace is a full dbt project with git versioning and database connections.
+                  You can create up to 3 workspaces.
+                </p>
+              </div>
             ) : (
               <ul className="catalog-list">
                 {workspaces.map((ws: Workspace) => (
@@ -151,9 +191,10 @@ export default function ProjectDialog({ onOpen }: ProjectDialogProps) {
             )}
             <button
               className="btn-primary"
+              style={{ width: '100%' }}
               onClick={() => setShowCreateModal(true)}
             >
-              Create Workspace
+              + Create Workspace
             </button>
           </div>
         )}
@@ -162,7 +203,8 @@ export default function ProjectDialog({ onOpen }: ProjectDialogProps) {
           <div>
             {catalogEntries.length === 0 ? (
               <p className="no-projects">
-                No projects in catalog.{isAdmin ? ' Add one via admin panel.' : ' Ask an admin to add a project.'}
+                No shared projects available.{' '}
+                {isAdmin ? 'Add your first project below.' : 'Contact an admin to add a project.'}
               </p>
             ) : (
               <ul className="catalog-list">
@@ -184,6 +226,44 @@ export default function ProjectDialog({ onOpen }: ProjectDialogProps) {
                   </li>
                 ))}
               </ul>
+            )}
+
+            {isAdmin && (
+              <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid #3c3c3c' }}>
+                <h3 style={{ fontSize: 16, color: '#cccccc', marginBottom: 12 }}>Add Project to Catalog</h3>
+                <div className="form-group">
+                  <label>Project name</label>
+                  <input
+                    placeholder="my-dbt-project"
+                    value={addName}
+                    onChange={e => setAddName(e.target.value)}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Server repo path (absolute)</label>
+                  <input
+                    placeholder="/home/git/repos/my-dbt-project.git"
+                    value={addRepoPath}
+                    onChange={e => setAddRepoPath(e.target.value)}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Main branch</label>
+                  <input
+                    placeholder="main"
+                    value={addMainBranch}
+                    onChange={e => setAddMainBranch(e.target.value)}
+                  />
+                </div>
+                <button
+                  className="btn-primary"
+                  style={{ width: '100%' }}
+                  onClick={handleAdd}
+                  disabled={adding || !addName || !addRepoPath}
+                >
+                  {adding ? 'Adding...' : 'Add to Catalog'}
+                </button>
+              </div>
             )}
           </div>
         )}
