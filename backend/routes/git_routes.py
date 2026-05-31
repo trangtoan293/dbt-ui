@@ -6,14 +6,22 @@ import subprocess
 import shutil
 import re
 import os
-from auth import get_current_user, CurrentUser
+from auth import get_current_user, require_role, CurrentUser
 from utils.user_paths import resolve_under_root, user_root
+from utils import catalog
+from utils.worktree import diff_against_main, merge_into_main
+from utils.operation_lock import acquire_lock, release_lock
 
 from models import (
     ProjectPath, GitTrackedRequest, RestoreFileRequest,
     SetupWorktreeRequest, GitStageRequest, GitCommitRequest,
     GitCreateBranchRequest, GitStagedFilesRequest
 )
+from pydantic import BaseModel
+
+
+class ProjectIdRequest(BaseModel):
+    id: str
 from utils.input_validation import (
     validate_git_user_name, validate_git_user_email, validate_git_branch_name,
     validate_file_path, validate_commit_message
@@ -926,3 +934,27 @@ async def git_delete_branch(request: GitCreateBranchRequest, user: CurrentUser =
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error deleting branch: {str(e)}")
+
+
+@router.post("/api/project-diff")
+async def project_diff(req: ProjectIdRequest,
+                       user: CurrentUser = Depends(get_current_user)):
+    entry = catalog.get_entry(req.id)
+    diff = diff_against_main(entry["repo_path"], user.sub, entry["main_branch"])
+    return {"diff": diff}
+
+
+@router.post("/api/merge-to-main")
+async def merge_to_main(req: ProjectIdRequest,
+                        user: CurrentUser = Depends(require_role("maintainer"))):
+    entry = catalog.get_entry(req.id)
+    # Lock the canonical repo path to prevent concurrent checkout+merge corruption.
+    if not acquire_lock(entry["repo_path"], "merge_to_main"):
+        raise HTTPException(status_code=409, detail="Another merge is in progress. Try again shortly.")
+    try:
+        result = merge_into_main(entry["repo_path"], user.sub, entry["main_branch"])
+    finally:
+        release_lock(entry["repo_path"])
+    audit(sub=user.sub, action="merge_to_main", target=req.id,
+          extra={"merged": result["merged"], "conflicts": result["conflicts"]})
+    return result

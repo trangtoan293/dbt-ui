@@ -104,8 +104,8 @@ class GitStageRequest(BaseModel):
 class GitCommitRequest(BaseModel):
     path: str  # Project path (worktree)
     message: str  # Commit message
-    user_name: str  # Git user.name
-    user_email: str  # Git user.email
+    user_name: str = ""  # Ignored; identity comes from Keycloak JWT
+    user_email: str = ""  # Ignored; identity comes from Keycloak JWT
 
 
 class GitCreateBranchRequest(BaseModel):
