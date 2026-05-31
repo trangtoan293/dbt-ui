@@ -4,24 +4,33 @@ import { apiUrl, apiFetch } from '../../config/api'
 
 interface DiffMergePanelProps {
   projectId: string
-  userRoles: string[]
   onMerged?: () => void
   onClose?: () => void
 }
 
-export default function DiffMergePanel({ projectId, userRoles, onMerged, onClose }: DiffMergePanelProps) {
+export default function DiffMergePanel({ projectId, onMerged, onClose }: DiffMergePanelProps) {
   const [diff, setDiff] = useState<string>('')
   const [loading, setLoading] = useState(false)
   const [merging, setMerging] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [conflicts, setConflicts] = useState<string[]>([])
-
-  const isMaintainer = userRoles.includes('maintainer') || userRoles.includes('admin')
+  const [isMaintainer, setIsMaintainer] = useState(false)
 
   useEffect(() => {
+    loadUser()
     loadDiff()
   }, [projectId])
+
+  const loadUser = async () => {
+    try {
+      const r = await apiFetch(apiUrl('/api/me'), { method: 'GET' })
+      if (r.ok) {
+        const u = await r.json()
+        setIsMaintainer(u.roles?.includes('maintainer') || u.roles?.includes('admin'))
+      }
+    } catch {}
+  }
 
   const loadDiff = async () => {
     setLoading(true)

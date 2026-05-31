@@ -15,6 +15,7 @@ import SidebarActions from './SidebarActions'
 import DbtRunModal from '../../dbt/DbtRunModal'
 import ConfirmModal from '../ConfirmModal'
 import GitModal from '../../git/GitModal'
+import DiffMergePanel from '../../git/DiffMergePanel'
 
 function Sidebar({
   projectPath,
@@ -58,6 +59,7 @@ function Sidebar({
   const [showRenameModal, setShowRenameModal] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [showGitModal, setShowGitModal] = useState(false)
+  const [showDiffPanel, setShowDiffPanel] = useState(false)
   const [isRunning, setIsRunning] = useState(false)
   const [isCompiling, setIsCompiling] = useState(false)
 
@@ -407,6 +409,7 @@ function Sidebar({
           }
         }}
         onGitClick={() => setShowGitModal(true)}
+        onDiffClick={() => setShowDiffPanel(true)}
         onRecreateVenv={onRecreateVenv}
         onChangeProject={onChangeProject}
       />
@@ -477,6 +480,18 @@ function Sidebar({
           onGitChange={onRefreshModifiedFiles}
           onTreeRefresh={loadDirectoryTree}
         />
+      )}
+
+      {showDiffPanel && (
+        <div className="git-modal-overlay" onClick={() => setShowDiffPanel(false)}>
+          <div className="git-modal" onClick={(e) => e.stopPropagation()}>
+            <DiffMergePanel
+              projectId={projectPath}
+              onMerged={() => setShowDiffPanel(false)}
+              onClose={() => setShowDiffPanel(false)}
+            />
+          </div>
+        </div>
       )}
     </div>
   )
