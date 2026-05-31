@@ -195,6 +195,9 @@ function Editor({
         if (data.formatted !== originalContent) {
           setHasUnsavedChanges(true)
         }
+        if (tabs && selectedFile) {
+          tabs.setCache(selectedFile, { content: data.formatted })
+        }
       } else {
         console.error('Format failed:', data.error)
       }

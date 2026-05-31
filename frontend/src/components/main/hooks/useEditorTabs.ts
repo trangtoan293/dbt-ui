@@ -54,10 +54,15 @@ export function useEditorTabs(): UseEditorTabs {
     [cache],
   )
 
+  const getCache = useCallback(
+    (path: string) => cache[path],
+    [cache],
+  )
+
   return {
     openPaths, activePath, isDirty,
     openTab, closeTab, setActive: setActivePath,
-    getCache: (path) => cache[path],
+    getCache,
     setCache,
   }
 }
